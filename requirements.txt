@@ -1,9 +1,0 @@
-pandas>=1.5
-numpy>=1.23
-statsmodels>=0.13
-matplotlib>=3.5
-openpyxl>=3.0
-# optionnel : facilite le téléchargement des positions CFTC
-# cot-reports
-# optionnel : source alternative des facteurs Fama-French
-# pandas-datareader
