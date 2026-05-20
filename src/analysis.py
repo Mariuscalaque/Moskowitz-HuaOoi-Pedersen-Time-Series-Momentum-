@@ -184,3 +184,87 @@ def annualized_sharpe(returns: pd.Series, ppy: int = 12) -> float:
 
 def sharpe_by_instrument(instrument_tsmom: pd.DataFrame) -> pd.Series:
     return instrument_tsmom.apply(annualized_sharpe).sort_values(ascending=False)
+
+
+# =======================================================================
+# Table 3 (version complète, 6 facteurs) — format de l'article
+# =======================================================================
+
+def _to_quarterly(monthly_returns: pd.Series) -> pd.Series:
+    """Rendements trimestriels non chevauchants (composition)."""
+    return (1.0 + monthly_returns).resample("QE").prod() - 1.0
+
+
+def _quarterly_factors(factors: pd.DataFrame) -> pd.DataFrame:
+    """Composition trimestrielle non chevauchante des facteurs."""
+    return (1.0 + factors).resample("QE").prod() - 1.0
+
+
+def table3_full(diversified_tsmom_ret: pd.Series,
+                factors: pd.DataFrame,
+                hac_lags_monthly: int = 3,
+                hac_lags_quarterly: int = 1) -> pd.DataFrame:
+    """
+    Reproduit la Table 3 du papier : régression du TSMOM diversifié (en excès)
+    sur MKT, BOND, GSCI, SMB, HML, UMD — en mensuel (ligne 1) et trimestriel
+    non chevauchant (ligne 2). SE Newey-West (HAC).
+
+    Renvoie un DataFrame : lignes = {Monthly, Quarterly},
+    colonnes = [Alpha, t(Alpha), MKT, t(MKT), ..., UMD, t(UMD), R2, N].
+    L'alpha est exprimé en % (×100) pour comparer aux 1.58%/mois du papier.
+    """
+    cols_order = list(factors.columns)
+    results = {}
+
+    # ---- Mensuel ----
+    dfm = pd.concat([diversified_tsmom_ret.rename("y"), factors], axis=1).dropna()
+    Xm = sm.add_constant(dfm[cols_order])
+    mm = sm.OLS(dfm["y"], Xm).fit(cov_type="HAC", cov_kwds={"maxlags": hac_lags_monthly})
+
+    # ---- Trimestriel non chevauchant ----
+    yq = _to_quarterly(diversified_tsmom_ret)
+    fq = _quarterly_factors(factors)
+    dfq = pd.concat([yq.rename("y"), fq], axis=1).dropna()
+    Xq = sm.add_constant(dfq[cols_order])
+    mq = sm.OLS(dfq["y"], Xq).fit(cov_type="HAC", cov_kwds={"maxlags": hac_lags_quarterly})
+
+    def _row(model):
+        row = {"Alpha (%)": model.params["const"] * 100.0,
+               "t(Alpha)": model.tvalues["const"]}
+        for c in cols_order:
+            row[c] = model.params[c]
+            row[f"t({c})"] = model.tvalues[c]
+        row["R2"] = model.rsquared
+        row["N"] = int(model.nobs)
+        return row
+
+    results["Monthly"] = _row(mm)
+    results["Quarterly"] = _row(mq)
+    out = pd.DataFrame(results).T
+    # ordre des colonnes
+    ordered = ["Alpha (%)", "t(Alpha)"]
+    for c in cols_order:
+        ordered += [c, f"t({c})"]
+    ordered += ["R2", "N"]
+    return out[ordered]
+
+
+def diversified_performance(diversified_tsmom_ret: pd.Series,
+                            ppy: int = 12) -> dict:
+    """Stats de performance brute du TSMOM diversifié (pour le résumé)."""
+    r = diversified_tsmom_ret.dropna()
+    mean_a = r.mean() * ppy
+    vol_a = r.std() * np.sqrt(ppy)
+    sharpe = mean_a / vol_a if vol_a > 0 else np.nan
+    cum = (1 + r).cumprod()
+    dd = (cum / cum.cummax() - 1).min()
+    # skewness / kurtosis
+    return {
+        "ann_mean": mean_a,
+        "ann_vol": vol_a,
+        "sharpe": sharpe,
+        "max_drawdown": dd,
+        "skew": r.skew(),
+        "kurtosis": r.kurtosis(),
+        "N_months": len(r),
+    }

@@ -3,11 +3,16 @@ Configuration: constants, asset mappings, and parameters
 following Moskowitz, Hua Ooi, Pedersen (2012) "Time Series Momentum".
 """
 
+import os
 from pathlib import Path
 
 # ---------- Paths ----------
+# PROJECT_ROOT = dossier qui contient src/, data/, outputs/ (résolu automatiquement,
+# fonctionne quel que soit l'OS et l'emplacement du projet).
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-DATA_PATH = Path("/mnt/project/data.xlsx")
+# Chemin RELATIF au projet : data/data.xlsx
+# (surchargeable via la variable d'environnement TSMOM_DATA si besoin)
+DATA_PATH = Path(os.environ.get("TSMOM_DATA", PROJECT_ROOT / "data" / "data.xlsx"))
 OUTPUT_DIR = PROJECT_ROOT / "outputs"
 TABLES_DIR = OUTPUT_DIR / "tables"
 FIGURES_DIR = OUTPUT_DIR / "figures"
