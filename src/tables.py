@@ -136,3 +136,38 @@ def performance_summary(returns_dict: dict) -> pd.DataFrame:
     df = pd.DataFrame(rows).set_index("Series")
     _save(df, "performance_summary", float_fmt="%.4f")
     return df
+
+
+# -----------------------------------------------------------------------
+# EXTENSIONS — Tables 3 (B/C), 4, 5, 6
+# -----------------------------------------------------------------------
+
+def table3_panel_save(panel_df: pd.DataFrame, name: str):
+    """Sauvegarde un panel de Table 3 (sortie de analysis.table3_full)."""
+    _save(panel_df, name, float_fmt="%.3f")
+    return panel_df
+
+
+def table4_save(within: pd.DataFrame, across: dict):
+    """Table 4 : Panel A (intra-classe) + Panel B (matrices inter-classes)."""
+    _save(within, "table4_panelA_within_class", float_fmt="%.3f")
+    for key, mat in across.items():
+        _save(mat, f"table4_panelB_across_{key.lower().replace(' ', '_')}",
+              float_fmt="%.3f")
+    return within
+
+
+def table5_save(panelA: pd.DataFrame, panelB: pd.DataFrame,
+                panelC: pd.DataFrame | None = None):
+    """Table 5 : A (TSMOM~XSMOM), B (décomposition), C (ce que TSMOM explique)."""
+    _save(panelA, "table5_panelA_tsmom_on_xsmom", float_fmt="%.3f")
+    _save(panelB, "table5_panelB_decomposition", float_fmt="%.5f")
+    if panelC is not None and len(panelC):
+        _save(panelC, "table5_panelC_what_tsmom_explains", float_fmt="%.3f")
+    return panelA
+
+
+def table6_save(df: pd.DataFrame):
+    """Table 6 : prédicteurs spot/roll/positions."""
+    _save(df, "table6_predictors", float_fmt="%.4f")
+    return df

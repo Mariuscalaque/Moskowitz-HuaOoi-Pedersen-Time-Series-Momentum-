@@ -268,3 +268,320 @@ def diversified_performance(diversified_tsmom_ret: pd.Series,
         "kurtosis": r.kurtosis(),
         "N_months": len(r),
     }
+
+
+# ============================================================================
+# EXTENSIONS — Tables 3B/3C, 4, 5, 6 ; event study (Fig 6) ; VAR/IRF (Fig 7)
+# ============================================================================
+from .strategy import tsmom_by_asset_class, passive_long  # noqa: E402
+from .config import asset_class_of  # noqa: E402
+
+
+# ---- Table 3, Panels B & C : il suffit de fournir la bonne matrice de facteurs
+# et de réutiliser table3_full(...). On ajoute ici les CONSTRUCTEURS de facteurs.
+
+def build_vme_factor_matrix(vme: pd.DataFrame,
+                            mkt_excess: pd.Series | None = None) -> pd.DataFrame:
+    """Table 3 Panel B : facteurs Value & Momentum Everywhere (AQR).
+    On retient les colonnes 'everywhere' (agrégées) si présentes, sinon tout.
+    Optionnellement on ajoute MKT en excès."""
+    cols = [c for c in vme.columns
+            if any(t in str(c).lower() for t in ("everywhere", "vme", "all"))]
+    X = vme[cols].copy() if cols else vme.copy()
+    if mkt_excess is not None:
+        X = X.join(mkt_excess.rename("MKT"), how="inner")
+    return X.dropna()
+
+
+def build_extremes_factor_matrix(mkt_excess: pd.Series,
+                                 vix: pd.Series | None = None,
+                                 ted: pd.Series | None = None,
+                                 ps_liquidity: pd.Series | None = None,
+                                 bw_sentiment: pd.Series | None = None) -> pd.DataFrame:
+    """Table 3 Panel C : marché + extrêmes de volatilité / liquidité / sentiment.
+    MKT, MKT² (convexité), ΔVIX, niveau TED, innovation de liquidité (PS),
+    sentiment (BW). Les composantes absentes sont simplement omises."""
+    X = pd.DataFrame({"MKT": mkt_excess})
+    X["MKT_sq"] = mkt_excess ** 2
+    if vix is not None:
+        X["dVIX"] = vix.reindex(mkt_excess.index).pct_change()
+    if ted is not None:
+        X["TED"] = ted.reindex(mkt_excess.index)
+    if ps_liquidity is not None:
+        X["LIQ"] = ps_liquidity.reindex(mkt_excess.index)
+    if bw_sentiment is not None:
+        X["SENT"] = bw_sentiment.reindex(mkt_excess.index)
+    return X.dropna()
+
+
+# ---- Table 4 : corrélations intra- et inter-classes -------------------------
+
+def avg_pairwise_corr(df: pd.DataFrame) -> float:
+    """Corrélation moyenne par paires (hors diagonale) des colonnes."""
+    c = df.corr()
+    n = c.shape[0]
+    if n < 2:
+        return np.nan
+    return (c.values.sum() - n) / (n * (n - 1))
+
+
+def table4_within_class(inst_tsmom: pd.DataFrame,
+                        inst_passive: pd.DataFrame) -> pd.DataFrame:
+    """Panel A : corrélation moyenne par paires, par classe, pour les stratégies
+    TSMOM et pour les positions passives longues."""
+    classes = {c: asset_class_of(c) for c in inst_tsmom.columns}
+    rows = {}
+    for ac in ("Commodity", "Equity", "Bond", "Currency"):
+        cols = [c for c, a in classes.items() if a == ac]
+        if len(cols) >= 2:
+            rows[ac] = {
+                "TSMOM strategies": avg_pairwise_corr(inst_tsmom[cols].dropna()),
+                "Passive long": avg_pairwise_corr(inst_passive[cols].dropna()),
+            }
+    return pd.DataFrame(rows).T
+
+
+def table4_across_class(tsmom_by_ac: pd.DataFrame,
+                        passive_by_ac: pd.DataFrame) -> dict:
+    """Panel B : matrices de corrélation inter-classes (stratégies équipondérées
+    par classe), pour TSMOM et pour passive long."""
+    return {
+        "TSMOM": tsmom_by_ac.dropna().corr(),
+        "Passive long": passive_by_ac.dropna().corr(),
+    }
+
+
+# ---- Table 5 Panel A : régression TSMOM(classe) sur XSMOM(classe) -----------
+
+def table5_tsmom_on_xsmom(tsmom_by_ac: pd.DataFrame,
+                          xsmom_by_ac: pd.DataFrame) -> pd.DataFrame:
+    """Pour chaque classe + ALL : régression HAC de TSMOM sur le XSMOM
+    correspondant. Renvoie alpha, beta(XSMOM), t-stats, R²."""
+    rows = {}
+    for ac in tsmom_by_ac.columns:
+        if ac not in xsmom_by_ac.columns:
+            continue
+        df = pd.concat([tsmom_by_ac[ac].rename("y"),
+                        xsmom_by_ac[ac].rename("XSMOM")], axis=1).dropna()
+        if len(df) < 24:
+            continue
+        X = sm.add_constant(df[["XSMOM"]])
+        m = sm.OLS(df["y"], X).fit(cov_type="HAC", cov_kwds={"maxlags": 3})
+        rows[ac] = {
+            "Alpha (%)": m.params["const"] * 100,
+            "t(Alpha)": m.tvalues["const"],
+            "beta(XSMOM)": m.params["XSMOM"],
+            "t(XSMOM)": m.tvalues["XSMOM"],
+            "R2": m.rsquared, "N": int(m.nobs),
+        }
+    return pd.DataFrame(rows).T
+
+
+# ---- Table 5 Panel C : « quels facteurs TSMOM explique-t-il ? » -------------
+
+def table5_what_tsmom_explains(targets: dict, tsmom: pd.Series) -> pd.DataFrame:
+    """Régresse chaque série-cible (facteurs externes, indices hedge funds…)
+    sur le facteur TSMOM (+ const), en HAC. Renvoie alpha, beta(TSMOM), R²."""
+    rows = {}
+    for name, series in targets.items():
+        df = pd.concat([series.rename("y"), tsmom.rename("TSMOM")], axis=1).dropna()
+        if len(df) < 24:
+            continue
+        X = sm.add_constant(df[["TSMOM"]])
+        m = sm.OLS(df["y"], X).fit(cov_type="HAC", cov_kwds={"maxlags": 3})
+        rows[name] = {
+            "Alpha (%)": m.params["const"] * 100,
+            "t(Alpha)": m.tvalues["const"],
+            "beta(TSMOM)": m.params["TSMOM"],
+            "t(TSMOM)": m.tvalues["TSMOM"],
+            "R2": m.rsquared, "N": int(m.nobs),
+        }
+    return pd.DataFrame(rows).T
+
+
+# ---- Table 6 : prédicteurs (spot / roll / positions spéculateurs) -----------
+
+def _pooled_predictive(y: pd.DataFrame, regressors: dict) -> dict:
+    """Régression pooled de y_{t+1} (rendement futures) sur les régresseurs
+    fournis (chacun un DataFrame instrument×date, connu en t). SE clustées par
+    date. Renvoie coefficients et t-stats."""
+    parts = {"y": y.shift(-1).stack(future_stack=True)}
+    for nm, x in regressors.items():
+        parts[nm] = x.stack(future_stack=True)
+    df = pd.DataFrame(parts).dropna()
+    if len(df) < 100:
+        return {}
+    groups = df.index.get_level_values(0)
+    X = sm.add_constant(df[list(regressors.keys())])
+    m = sm.OLS(df["y"], X).fit(cov_type="cluster", cov_kwds={"groups": groups})
+    out = {"Intercept": m.params["const"], "t(Intercept)": m.tvalues["const"],
+           "R2": m.rsquared, "N": int(m.nobs)}
+    for nm in regressors:
+        out[nm] = m.params[nm]
+        out[f"t({nm})"] = m.tvalues[nm]
+    return out
+
+
+def table6_predictors(total_ret: pd.DataFrame,
+                      sig_total: pd.DataFrame,
+                      sig_spot: pd.DataFrame,
+                      sig_roll: pd.DataFrame,
+                      net_spec: pd.DataFrame | None = None) -> pd.DataFrame:
+    """
+    Plusieurs spécifications empilées (lignes), à la Table 6 :
+      (1) Full TSMOM seul,
+      (2) Spot MOM + Roll MOM,
+      (3) + niveau et variation des positions nettes spéculateurs (si dispo),
+      (4) + interactions Spot×Δpos et Roll×Δpos (si dispo).
+    Les colonnes communes sont alignées ; les cases vides = régresseur absent.
+    """
+    specs = {}
+    specs["(1) Full TSMOM"] = _pooled_predictive(total_ret, {"FullMOM": sig_total})
+    specs["(2) Spot+Roll"] = _pooled_predictive(
+        total_ret, {"SpotMOM": sig_spot, "RollMOM": sig_roll})
+
+    if net_spec is not None:
+        ns = net_spec.reindex_like(sig_total)
+        d_ns = ns.diff()
+        specs["(3) +Spec pos"] = _pooled_predictive(
+            total_ret, {"SpotMOM": sig_spot, "RollMOM": sig_roll,
+                        "NetSpec": ns, "dNetSpec": d_ns})
+        specs["(4) +Interactions"] = _pooled_predictive(
+            total_ret, {"SpotMOM": sig_spot, "RollMOM": sig_roll,
+                        "dNetSpec": d_ns,
+                        "Spot×dSpec": sig_spot * d_ns,
+                        "Roll×dSpec": sig_roll * d_ns})
+    return pd.DataFrame(specs).T
+
+
+# ---- Figure 6 Panel A : event study des rendements --------------------------
+
+def event_study_returns(monthly_ret: pd.DataFrame,
+                        k: int = 12,
+                        window_before: int = 12,
+                        window_after: int = 36) -> pd.DataFrame:
+    """
+    Pour chaque (instrument, t), on regarde le signe du rendement passé sur k
+    mois, puis on suit le rendement CUMULÉ moyen de -window_before à +window_after
+    mois autour de l'événement, conditionnellement au signe (positif/négatif).
+    Renvoie un DataFrame indexé par le décalage d'événement, colonnes
+    'positive' / 'negative' (rendement cumulé moyen, base 0 au temps 0).
+    """
+    past = past_k_month_returns(monthly_ret, k=k)
+    sign = np.sign(past)
+    pos_paths, neg_paths = [], []
+    ncols = monthly_ret.shape[1]
+    arr = monthly_ret.values
+    sgn = sign.values
+    T = len(monthly_ret)
+    offsets = range(-window_before, window_after + 1)
+
+    for j in range(ncols):
+        col = arr[:, j]
+        s = sgn[:, j]
+        for t in range(window_before, T - window_after):
+            if np.isnan(s[t]):
+                continue
+            seg = col[t - window_before: t + window_after + 1]
+            if np.isnan(seg).any():
+                continue
+            cum = np.cumsum(seg) - np.cumsum(seg)[window_before]  # base 0 au temps 0
+            (pos_paths if s[t] > 0 else neg_paths).append(cum)
+
+    res = pd.DataFrame(index=list(offsets))
+    res["positive"] = np.nanmean(np.array(pos_paths), axis=0) if pos_paths else np.nan
+    res["negative"] = np.nanmean(np.array(neg_paths), axis=0) if neg_paths else np.nan
+    res.index.name = "event_month"
+    return res
+
+
+def event_study_positions(net_spec: pd.DataFrame,
+                          monthly_ret: pd.DataFrame,
+                          k: int = 12,
+                          window_before: int = 12,
+                          window_after: int = 36) -> pd.DataFrame:
+    """Figure 6 Panel B : même event study mais sur la position nette des
+    spéculateurs (niveau dé-moyené), conditionnellement au signe du momentum."""
+    common = [c for c in net_spec.columns if c in monthly_ret.columns]
+    if not common:
+        return pd.DataFrame()
+    past = past_k_month_returns(monthly_ret[common], k=k)
+    sign = np.sign(past).reindex(net_spec.index)
+    ns = net_spec[common].sub(net_spec[common].mean())   # dé-moyenné
+    pos_paths, neg_paths = [], []
+    idx = ns.index
+    offsets = range(-window_before, window_after + 1)
+    for c in common:
+        s = sign[c].reindex(idx).values
+        v = ns[c].values
+        for t in range(window_before, len(idx) - window_after):
+            if np.isnan(s[t]):
+                continue
+            seg = v[t - window_before: t + window_after + 1]
+            if np.isnan(seg).any():
+                continue
+            (pos_paths if s[t] > 0 else neg_paths).append(seg)
+    res = pd.DataFrame(index=list(offsets))
+    res["positive"] = np.nanmean(np.array(pos_paths), axis=0) if pos_paths else np.nan
+    res["negative"] = np.nanmean(np.array(neg_paths), axis=0) if neg_paths else np.nan
+    res.index.name = "event_month"
+    return res
+
+
+# ---- Figure 7 : réponse impulsionnelle (VAR returns × positions) ------------
+
+def impulse_response(monthly_ret: pd.DataFrame,
+                     net_spec: pd.DataFrame | None = None,
+                     instrument: str | None = None,
+                     horizon: int = 36,
+                     lags: int = 2) -> pd.DataFrame | None:
+    """
+    Réponse impulsionnelle cumulée à un choc de +1 écart-type sur le rendement.
+    - Si `net_spec` est fourni : VAR bivarié [rendement, position nette spéc.]
+      sur le pool empilé (ou un instrument donné).
+    - Sinon : AR univarié sur les rendements (réponse cumulée des rendements).
+    Renvoie un DataFrame indexé par l'horizon (cumulé).
+    """
+    try:
+        from statsmodels.tsa.api import VAR
+        from statsmodels.tsa.ar_model import AutoReg
+    except Exception:
+        return None
+
+    if net_spec is not None:
+        cols = ([instrument] if instrument else
+                [c for c in net_spec.columns if c in monthly_ret.columns])
+        stacked = []
+        for c in cols:
+            d = pd.concat([monthly_ret[c].rename("ret"),
+                           net_spec[c].rename("pos")], axis=1).dropna()
+            if len(d) > lags + 10:
+                stacked.append(d)
+        if not stacked:
+            return None
+        data = pd.concat(stacked, axis=0).reset_index(drop=True)
+        model = VAR(data).fit(lags)
+        irf = model.irf(horizon)
+        # choc sur 'ret' -> réponses cumulées de ret et pos
+        cum = irf.cum_effects  # shape (horizon+1, neq, neq)
+        ret_idx, pos_idx = 0, 1
+        out = pd.DataFrame({
+            "cum_return": cum[:, ret_idx, ret_idx],
+            "cum_position": cum[:, pos_idx, ret_idx],
+        })
+        out.index.name = "horizon"
+        return out
+
+    # repli univarié
+    series = (monthly_ret[instrument].dropna() if instrument
+              else monthly_ret.mean(axis=1).dropna())
+    ar = AutoReg(series, lags=lags, old_names=False).fit()
+    # réponse à un choc unitaire via simulation des coefficients AR
+    phi = ar.params[1:1 + lags].values
+    resp = np.zeros(horizon + 1)
+    resp[0] = 1.0
+    for h in range(1, horizon + 1):
+        resp[h] = sum(phi[i] * resp[h - 1 - i] for i in range(lags) if h - 1 - i >= 0)
+    out = pd.DataFrame({"cum_return": np.cumsum(resp)})
+    out.index.name = "horizon"
+    return out

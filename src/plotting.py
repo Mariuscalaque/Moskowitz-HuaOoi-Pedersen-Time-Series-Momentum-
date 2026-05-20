@@ -192,3 +192,88 @@ def figure_drawdown(tsmom: pd.Series, save_name: str = "fig5_drawdown"):
     ax.yaxis.set_major_formatter(mtick.PercentFormatter(xmax=1.0))
     ax.set_title("TSMOM drawdown over time", loc="left")
     return _save(fig, save_name)
+
+
+# -----------------------------------------------------------------------
+# Figure 5 — Positions nettes des spéculateurs
+# -----------------------------------------------------------------------
+
+def figure5_net_speculator(net_spec: pd.DataFrame, save_name: str = "fig5_net_speculator"):
+    """Position nette moyenne des spéculateurs (% open interest) par instrument,
+    moyennée sur l'échantillon, colorée par classe d'actifs."""
+    means = net_spec.mean().dropna().sort_values()
+    if means.empty:
+        return None
+    colors = [ASSET_CLASS_COLORS.get(asset_class_of(t), "#888") for t in means.index]
+    fig, ax = plt.subplots(figsize=(14, 5))
+    ax.bar(range(len(means)), means.values, color=colors, edgecolor="black", linewidth=0.4)
+    ax.axhline(0, color="black", lw=0.8)
+    ax.set_xticks(range(len(means)))
+    ax.set_xticklabels([pretty_name(t) for t in means.index], rotation=90, fontsize=8)
+    ax.set_ylabel("Net speculator position (avg, % open interest)")
+    ax.set_title("Fig. 5 — Average net speculator positions by instrument", loc="left")
+    return _save(fig, save_name)
+
+
+# -----------------------------------------------------------------------
+# Figure 6 — Event study (rendements conditionnels au signe du momentum)
+# -----------------------------------------------------------------------
+
+def figure6_event_study(returns_paths: pd.DataFrame,
+                        positions_paths: pd.DataFrame | None = None,
+                        save_name: str = "fig6_event_study"):
+    """Panel A : rendement cumulé moyen autour d'événements TSMOM +/-.
+    Panel B (si fourni) : position nette moyenne des spéculateurs."""
+    n = 2 if (positions_paths is not None and not positions_paths.empty) else 1
+    fig, axes = plt.subplots(1, n, figsize=(7 * n, 5))
+    axes = np.atleast_1d(axes)
+
+    ax = axes[0]
+    ax.plot(returns_paths.index, returns_paths["positive"], color="#2ca02c",
+            lw=2, label="Past 12m return > 0")
+    ax.plot(returns_paths.index, returns_paths["negative"], color="#d62728",
+            lw=2, label="Past 12m return < 0")
+    ax.axvline(0, color="black", lw=0.7, ls="--")
+    ax.axhline(0, color="black", lw=0.6)
+    ax.set_xlabel("Event month (0 = signal date)")
+    ax.set_ylabel("Cumulative excess return")
+    ax.set_title("Fig. 6A — Returns around TSMOM events", loc="left")
+    ax.legend(frameon=False)
+
+    if n == 2:
+        ax2 = axes[1]
+        ax2.plot(positions_paths.index, positions_paths["positive"], color="#2ca02c", lw=2)
+        ax2.plot(positions_paths.index, positions_paths["negative"], color="#d62728", lw=2)
+        ax2.axvline(0, color="black", lw=0.7, ls="--")
+        ax2.axhline(0, color="black", lw=0.6)
+        ax2.set_xlabel("Event month")
+        ax2.set_ylabel("Net speculator position (de-meaned)")
+        ax2.set_title("Fig. 6B — Speculator positions around events", loc="left")
+    fig.tight_layout()
+    return _save(fig, save_name)
+
+
+# -----------------------------------------------------------------------
+# Figure 7 — Réponse impulsionnelle à un choc de rendement
+# -----------------------------------------------------------------------
+
+def figure7_impulse_response(irf: pd.DataFrame, save_name: str = "fig7_impulse_response"):
+    """Réponse cumulée à un choc de +1σ sur le rendement : prix (et position
+    spéculateurs si VAR bivarié)."""
+    has_pos = "cum_position" in irf.columns
+    n = 2 if has_pos else 1
+    fig, axes = plt.subplots(1, n, figsize=(7 * n, 4.5))
+    axes = np.atleast_1d(axes)
+    axes[0].plot(irf.index, irf["cum_return"], color="#1f3a93", lw=2)
+    axes[0].axhline(0, color="black", lw=0.6)
+    axes[0].set_xlabel("Months after shock")
+    axes[0].set_ylabel("Cumulative return response")
+    axes[0].set_title("Fig. 7A — Price response to a +1σ return shock", loc="left")
+    if has_pos:
+        axes[1].plot(irf.index, irf["cum_position"], color="#d62728", lw=2)
+        axes[1].axhline(0, color="black", lw=0.6)
+        axes[1].set_xlabel("Months after shock")
+        axes[1].set_ylabel("Cumulative position response")
+        axes[1].set_title("Fig. 7B — Speculator position response", loc="left")
+    fig.tight_layout()
+    return _save(fig, save_name)

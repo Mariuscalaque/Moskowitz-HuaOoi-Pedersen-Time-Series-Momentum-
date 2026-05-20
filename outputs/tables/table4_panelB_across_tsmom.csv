@@ -1,0 +1,5 @@
+,Commodity,Equity,Bond,Currency
+Commodity,1.000,0.094,0.136,0.053
+Equity,0.094,1.000,0.173,0.008
+Bond,0.136,0.173,1.000,0.047
+Currency,0.053,0.008,0.047,1.000

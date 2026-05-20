@@ -1,90 +1,101 @@
-# Réplication — Moskowitz, Hua Ooi & Pedersen (2012) « Time Series Momentum »
+# Réplication — *Time Series Momentum* (Moskowitz, Hua Ooi & Pedersen, 2012)
 
-Réplication fidèle de l'article publié au *Journal of Financial Economics* (104, 228-250),
-avec **récupération automatique des facteurs Fama-French** pour la Table 3.
+Réplication complète de l'article : **6 tables** et **7 figures**.
+Le projet produit systématiquement tout ce qui est réalisable avec `data.xlsx`,
+et complète les analyses nécessitant des données externes (téléchargées
+automatiquement et mises en cache).
 
-## Organisation du dossier
-
-```
-tsmom_replication/
-├── README.md
-├── replication.ipynb                       # Notebook maître (à exécuter)
-├── replication_executed_with_outputs.ipynb # Version déjà exécutée, sorties incluses
-├── data/
-│   └── data.xlsx                           # À placer ici (fichier de prix fourni)
-├── src/
-│   ├── config.py        # Constantes, mapping des 57 instruments → 4 classes d'actifs
-│   ├── data_loader.py   # Chargement de data.xlsx + parsing des dates Excel
-│   ├── returns.py       # Rendements futures (pct_change) + carry FX
-│   ├── volatility.py    # Volatilité ex-ante EWMA — Équation (1)
-│   ├── strategy.py      # Signal TSMOM sign(r_{t-12,t}) × 40%/σ — Équation (5)
-│   ├── analysis.py      # Fig.1, grille (k,h) Table 2, Table 3 à 6 facteurs
-│   ├── factors.py       # ★ Récupération AUTO des facteurs Fama-French (SMB/HML/UMD/RF)
-│   ├── plotting.py      # Toutes les figures
-│   └── tables.py        # Export CSV + Markdown
-└── outputs/
-    ├── figures/         # Fig 1 (A/B/C), Fig 2, Fig 3 (×2), Fig 4, drawdown
-    └── tables/          # Table 1, Table 2 (A-E), Table 3, résumés
-```
-
-## Installation & exécution
+## Installation
 
 ```bash
-pip install pandas numpy matplotlib statsmodels openpyxl scipy
-# (optionnel, source alternative pour les facteurs)
-pip install pandas_datareader
+pip install -r requirements.txt          # pandas, numpy, statsmodels, matplotlib, openpyxl
+pip install cot-reports                   # (optionnel) facilite le téléchargement CFTC
 ```
 
-1. Placer `data.xlsx` dans `data/` (et ajuster `DATA_PATH` dans `src/config.py` si besoin).
-2. Ouvrir `replication.ipynb` et exécuter toutes les cellules.
+Place `data.xlsx` dans `data/` (déjà attendu là par `config.py`).
 
-## Récupération automatique des facteurs Fama-French (`src/factors.py`)
+## Lancer la réplication complète
 
-La Table 3 régresse le TSMOM sur 6 facteurs (Eq. 4). Trois — MKT (MSCI World),
-BOND (Barclays Agg), GSCI (S&P GSCI) — sont déjà dans `data.xlsx`. Les trois autres
-— **SMB, HML, UMD** — sont **téléchargés automatiquement** depuis la
-**Ken French Data Library** (Dartmouth), la source citée par l'article.
+```bash
+python run_replication.py                 # 1985-2009 (échantillon papier)
+python run_replication.py --no-external   # sans aucun téléchargement
+python run_replication.py --end 2025-12-31
+```
 
-`fetch_ff_factors()` essaie dans l'ordre :
-1. **téléchargement direct** du ZIP Dartmouth (Python pur, sans dépendance) ;
-2. **pandas_datareader** (si installé) ;
-3. **CSV locaux** téléchargés à la main : `fetch_ff_factors(source='csv', csv_3factor=..., csv_momentum=...)`.
+Sorties : `outputs/tables/*.csv` (+ `.md`) et `outputs/figures/*.png`.
 
-Fichiers concernés sur le site de French (mensuels) :
-`F-F_Research_Data_Factors` (→ SMB, HML, RF) et `F-F_Momentum_Factor` (→ UMD).
-Un accès Internet est requis pour les sources 1 et 2.
+## Notebook
 
-## Méthodologie clé (correspondance à l'article)
+`replication_complete.ipynb` reproduit l'article pas-à-pas (un bloc par table/
+figure, avec interprétation comparée à l'article) en s'appuyant sur `src/`.
+Il est livré **pré-exécuté** sur l'échantillon papier ; relance-le **avec une
+connexion internet** pour remplir les cellules 🌐 (Fama-French, VME, CFTC…).
 
-| Étape | Méthode | Réf. |
+## Structure
+
+```
+src/
+  config.py          paramètres, mapping des instruments par classe
+  data_loader.py     lecture/nettoyage de data.xlsx
+  returns.py         rendements excédentaires journaliers/mensuels (futures + FX)
+  volatility.py      volatilité ex-ante EWMA (Eq. 1)
+  strategy.py        signal TSMOM, scaling 40% vol, portefeuille diversifié (Eq. 5)
+  crosssectional.py  XSMOM + décomposition Lo-MacKinlay        (Table 5)
+  rollyield.py       décomposition rendement = spot + roll      (Table 6)
+  factors.py         facteurs Fama-French (SMB/HML/UMD/RF)      (Table 3A)
+  external_data.py   AQR / Pástor-Stambaugh / Baker-Wurgler / CFTC + CACHE
+  analysis.py        régressions Fig.1, Tables 2/3/4/5/6, event study, VAR
+  tables.py          mise en forme et sauvegarde des tables
+  plotting.py        Figures 1 à 7
+  pipeline.py        orchestrateur (produit tout)
+run_replication.py   point d'entrée
+```
+
+## Couverture article → sortie
+
+| Élément | Fichier de sortie | Données |
 |---|---|---|
-| Rendements excédentaires | Futures : %change. FX : spot return + (i_étranger − i_USD)/252 | §2.1 |
-| Volatilité ex-ante | EWMA com=60 (δ=60/61), annualisation 261, sans look-ahead | Éq.(1) |
-| Signal & taille | sign(rendement 12 mois) × (40%/σ) × rendement t→t+1 | Éq.(5) |
-| Facteur diversifié | Moyenne équipondérée des instruments disponibles chaque mois | §4.1 |
-| Table 3 | Régression sur MKT, BOND, GSCI, SMB, HML, UMD (mensuel + trimestriel), SE Newey-West | Éq.(4) |
+| Table 1 — stats descriptives | `table1_summary_stats` | data.xlsx |
+| Table 2 — alphas (k,h) | `table2_panelA_all` | data.xlsx |
+| Table 3A — facteurs Fama-French | `table3_panelA_ff` | FF (auto, `factors.py`) |
+| Table 3B — facteurs VME | `table3_panelB_vme` | **AQR** (externe) |
+| Table 3C — extrêmes marché/vol/liq/sent | `table3_panelC_extremes` | VIX+TED (data.xlsx) ; PS+BW (externes) |
+| Table 4 — corrélations intra/inter-classes | `table4_panelA/B_*` | data.xlsx |
+| Table 5 — TSMOM vs XSMOM (A/B/C) | `table5_panelA/B/C_*` | A,B : data.xlsx ; C : indices HF (externe) |
+| Table 6 — spot / roll / positions | `table6_predictors` | spot/roll (M1/M2 data.xlsx) ; positions **CFTC** |
+| Figure 1 — prédictibilité par lag | `fig1_panelA/B` | data.xlsx |
+| Figure 2 — Sharpe par instrument | `fig2_sharpe_by_instrument` | data.xlsx |
+| Figure 3 — cumulé TSMOM vs passif | `fig3_cumulative` | data.xlsx |
+| Figure 4 — smile | `fig4_smile` | data.xlsx |
+| Figure 5 — positions spéculateurs | `fig5_net_speculator` | **CFTC** |
+| Figure 6 — event study (A rendements / B positions) | `fig6_event_study` | A : data.xlsx ; B : CFTC |
+| Figure 7 — réponse impulsionnelle | `fig7_impulse_response` | univarié (data.xlsx) ; bivarié si CFTC |
 
-## Principaux résultats (échantillon papier 1985-2009)
+## Données externes
 
-| Métrique | Papier | Réplication |
-|---|---|---|
-| **Sharpe (TSMOM diversifié)** | ~1.0–1.2 | **0.90** |
-| Rendement annualisé | ~11 % | 11.30 % |
-| Volatilité annualisée | ~12 % | 12.53 % |
-| Max drawdown | — | −20.7 % |
-| Instruments avec Sharpe > 0 | 58/58 | 51/57 |
-| Pattern Fig. 1 (continuation 1-12m, reversal long terme) | ✓ | ✓ |
-| Coefficient MKT² (sourire, Fig. 4) | positif | β₂ ≈ +1.13 |
-| **Alpha Table 3** (6 facteurs, en ligne) | ≈ 1.58 %/mois, charge + sur UMD | se calcule au run avec FF |
+Tout passe par `src/external_data.py`, qui télécharge **et met en cache** dans
+`data/external/` (fichier brut + CSV nettoyé + `_manifest.json` traçant URL,
+date, période). Aux exécutions suivantes, le cache est relu (fonctionne ensuite
+hors-ligne).
 
-### Note importante sur la Table 3
-Sans les facteurs Fama-French, la régression se limite à 3 facteurs (MKT/BOND/GSCI) et
-l'alpha tombe à ~0.55 %/mois — précisément parce qu'UMD, le facteur le plus corrélé au
-TSMOM, manque. C'est pour cela que `factors.py` récupère SMB/HML/UMD : avec eux, on retrouve
-le résultat central de l'article (alpha large + significatif, chargement positif sur UMD,
-bêtas non significatifs sur MKT/SMB/HML).
+- **AQR** (facteurs VME, + série TSMOM officielle de validation) : Excel direct.
+- **Pástor-Stambaugh** (liquidité) et **Baker-Wurgler** (sentiment) : fichiers
+  dont le nom porte un millésime — si l'URL par défaut renvoie 404, passe
+  `url="..."` à jour ou `local_file="..."`.
+- **CFTC** (positions spéculateurs, Legacy futures-only depuis 1986) : via la
+  librairie `cot-reports` (recommandé) ou téléchargement direct des ZIP annuels.
+  Couvre uniquement le sous-univers **listé aux US** (pas DAX/CAC/TOPIX/Gilt/
+  Bund/LME/NOK/SEK) ; voir `DEFAULT_COT_MARKETS` dans `external_data.py`.
 
-## Écarts résiduels assumés vs papier
-1. **57 vs 58 instruments** : reconstruction FX-forward non parfaite avec les taux courts fournis.
-2. **Couverture commodities** : quelques séries commencent plus tard que dans Bloomberg du papier.
-3. Les facteurs SMB/HML/UMD sont les facteurs **US** de French (ceux cités par l'article).
+Non automatisé : indices hedge funds Credit Suisse (Table 5C) — inscription
+requise depuis la fusion CSAM→UBS (2024). Utiliser un substitut gratuit (SG
+Trend / Barclay CTA / HFR) puis le passer en cible à `table5_what_tsmom_explains`.
+
+## Notes méthodologiques
+
+- **Table 5B** : décomposition de Lo-MacKinlay (1990) ; identité comptable
+  vérifiée (Auto + Cross + Mean = profit empirique, à la précision machine).
+- **Table 6** : décomposition spot/roll *approximée* à partir des contrats de
+  1re et 2e échéance (M1/M2) ; le papier utilise des séries spot/roll dédiées.
+- Toutes les régressions de performance utilisent des erreurs-types HAC
+  (Newey-West) ; les régressions de panel (Fig.1, Table 6) des SE clustées par date.
