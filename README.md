@@ -1,6 +1,6 @@
 # Réplication — *Time Series Momentum* (Moskowitz, Hua Ooi & Pedersen, 2012)
 
-Réplication complète de l'article : **6 tables** et **7 figures**.
+Réplication complète et propositions d'extensions de l'article : **6 tables** et **7 figures**.
 Le projet produit systématiquement tout ce qui est réalisable avec `data.xlsx`,
 et complète les analyses nécessitant des données externes (téléchargées
 automatiquement et mises en cache).
