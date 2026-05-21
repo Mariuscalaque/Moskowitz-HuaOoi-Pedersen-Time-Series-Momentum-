@@ -472,6 +472,27 @@ def _fetch_cot_raw_via_direct(years) -> pd.DataFrame:
     return pd.concat(frames, ignore_index=True)
 
 
+def _find_date_col(columns):
+    """Colonne de date la plus fiable d'un rapport CFTC.
+    Préfère un format AAAA-MM-JJ explicite ('yyyy' dans le nom), sinon retombe
+    sur la 1re colonne contenant 'date' (souvent 'As of Date in Form YYMMDD')."""
+    cols = list(columns)
+    for c in cols:
+        cl = str(c).lower()
+        if "date" in cl and ("yyyy" in cl or "%y-%m-%d" in cl):
+            return c
+    return _find_col(cols, _RE_DATE)
+
+
+def _parse_cot_dates(s: pd.Series) -> pd.Series:
+    """Parse des dates CFTC robuste : essaie le format standard, puis YYMMDD."""
+    d = pd.to_datetime(s, errors="coerce")
+    if d.notna().mean() < 0.5:  # échec massif -> tenter YYMMDD (ex. '860930')
+        d = pd.to_datetime(s.astype(str).str.zfill(6), format="%y%m%d",
+                           errors="coerce")
+    return d
+
+
 def _net_speculator_positions(raw: pd.DataFrame,
                               markets: dict) -> pd.DataFrame:
     """
@@ -485,7 +506,7 @@ def _net_speculator_positions(raw: pd.DataFrame,
     """
     cols = raw.columns
     c_mkt = _find_col(cols, _RE_MARKET)
-    c_date = _find_col(cols, _RE_DATE)
+    c_date = _find_date_col(cols)
     c_ncl = _find_col(cols, _RE_NC_LONG)
     c_ncs = _find_col(cols, _RE_NC_SHORT)
     c_oi = _find_col(cols, _RE_OI)
@@ -498,7 +519,7 @@ def _net_speculator_positions(raw: pd.DataFrame,
 
     work = raw[[c_mkt, c_date, c_ncl, c_ncs, c_oi]].copy()
     work.columns = ["market", "date", "nc_long", "nc_short", "oi"]
-    work["date"] = pd.to_datetime(work["date"], errors="coerce")
+    work["date"] = _parse_cot_dates(work["date"])
     for col in ("nc_long", "nc_short", "oi"):
         work[col] = pd.to_numeric(work[col], errors="coerce")
     work = work.dropna(subset=["date", "market"])
