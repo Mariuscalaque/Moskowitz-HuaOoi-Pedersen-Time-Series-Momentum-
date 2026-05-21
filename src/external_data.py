@@ -44,8 +44,10 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import re
 import zipfile
+import contextlib
 import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
@@ -452,11 +454,20 @@ def _find_col(columns, regex):
 
 
 def _fetch_cot_raw_via_library(years) -> pd.DataFrame:
-    """Source A : librairie `cot_reports` (pip install cot-reports)."""
+    """Source A : librairie `cot_reports` (pip install cot-reports).
+    On silencie son affichage par année et on redirige les fichiers bruts
+    (annual.txt) qu'elle dépose vers data/external/raw, pas la racine du projet."""
     import cot_reports as cot  # type: ignore
+    _ensure_dirs()
     frames = []
-    for y in years:
-        frames.append(cot.cot_year(year=y, cot_report_type="legacy_fut"))
+    cwd0 = os.getcwd()
+    try:
+        os.chdir(RAW_DIR)  # les annual.txt déposés par la lib vont dans data/external/raw
+        with contextlib.redirect_stdout(io.StringIO()):
+            for y in years:
+                frames.append(cot.cot_year(year=y, cot_report_type="legacy_fut"))
+    finally:
+        os.chdir(cwd0)
     return pd.concat(frames, ignore_index=True)
 
 
@@ -568,8 +579,14 @@ def fetch_cftc_cot(years=range(1986, 2010),
 
     if not force_refresh:
         cached = _load_cache(name)
-        if cached is not None:
+        # Rejette un cache DÉGÉNÉRÉ (ex. stub d'une ligne issu d'un mauvais
+        # fichier) : sous 24 mois, ce n'est pas une vraie série -> on ignore
+        # et on re-télécharge, plutôt que de propager des données trompeuses.
+        if cached is not None and len(cached.dropna(how="all")) >= 24:
             return cached
+        if cached is not None:
+            print(f"[CFTC] cache ignoré : seulement {len(cached.dropna(how='all'))} "
+                  f"ligne(s) valide(s) (< 24) -> re-téléchargement.")
 
     years = list(years)
     if source in ("auto", "library"):

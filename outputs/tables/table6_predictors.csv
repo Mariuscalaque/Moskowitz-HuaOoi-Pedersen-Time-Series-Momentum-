@@ -1,3 +1,5 @@
-,Intercept,t(Intercept),R2,N,FullMOM,t(FullMOM),SpotMOM,t(SpotMOM),RollMOM,t(RollMOM)
-(1) Full TSMOM,0.0045,3.4999,0.0045,13536.0000,0.0172,2.6034,,,,
-(2) Spot+Roll,0.0045,3.5121,0.0045,13536.0000,,,0.0166,2.0424,0.0189,2.0660
+,Intercept,t(Intercept),R2,N,FullMOM,t(FullMOM),SpotMOM,t(SpotMOM),RollMOM,t(RollMOM),NetSpec,t(NetSpec),dNetSpec,t(dNetSpec),Spot×dSpec,t(Spot×dSpec),Roll×dSpec,t(Roll×dSpec)
+(1) Full TSMOM,0.0045,3.4999,0.0045,13536.0000,0.0172,2.6034,,,,,,,,,,,,
+(2) Spot+Roll,0.0045,3.5121,0.0045,13536.0000,,,0.0166,2.0424,0.0189,2.0660,,,,,,,,
+(3) +Spec pos,0.0052,2.4529,0.0018,4180.0000,,,0.0054,0.4021,0.0152,1.1828,0.0068,0.5770,-0.0021,-0.1476,,,,
+(4) +Interactions,0.0055,2.7690,0.0031,4180.0000,,,0.0072,0.5713,0.0157,1.2291,,,-0.0074,-0.4982,0.1675,1.4333,0.1457,0.8544
