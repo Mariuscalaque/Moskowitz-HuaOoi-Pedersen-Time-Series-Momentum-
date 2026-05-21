@@ -194,7 +194,9 @@ def run(start: str = PAPER_START, end: str = PAPER_END,
     # ============================================================
     # TABLE 5 — A (TSMOM~XSMOM), B (decomposition), C (what TSMOM explains)
     # ============================================================
-    t5a = table5_tsmom_on_xsmom(tsmom_ac.loc[m], xsmom_ac.loc[m])
+    t5a = table5_tsmom_on_xsmom(tsmom_ac.loc[m], xsmom_ac.loc[m],
+                                tsmom_all=tsmom_p,
+                                xsmom_all=xsmom_ac["ALL"].loc[m] if "ALL" in xsmom_ac else None)
     t5b = decomposition_by_asset_class(mret, lookback=LOOKBACK_MONTHS)
     t5c = pd.DataFrame()
     targets = {}

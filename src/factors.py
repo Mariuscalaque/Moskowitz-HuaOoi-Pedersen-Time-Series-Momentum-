@@ -24,7 +24,8 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from .config import FF_3FACTOR_CSV, FF_MOMENTUM_CSV, HEDGE_FUND_CSV, EXTERNAL_DIR
+from .config import (FF_3FACTOR_CSV, FF_MOMENTUM_CSV, HEDGE_FUND_CSV,
+                     EXTERNAL_DIR, DATA_DIR, DATA_PATH)
 
 _FF_BASE = "https://mba.tuck.dartmouth.edu/pages/faculty/ken.french/ftp/"
 _FF3_ZIP = _FF_BASE + "F-F_Research_Data_Factors_CSV.zip"
@@ -35,17 +36,43 @@ _MOM_ZIP = _FF_BASE + "F-F_Momentum_Factor_CSV.zip"
 # Parsing bas niveau (format French : bloc mensuel YYYYMM)
 # ----------------------------------------------------------------------
 def _parse_ff_csv_monthly(text: str) -> pd.DataFrame:
-    rows, header = [], None
-    for line in text.splitlines():
-        parts = [p.strip() for p in line.split(",")]
-        if header is None:
-            if any(tok in line for tok in ("Mkt-RF", "SMB", "HML", "Mom", "RF")):
-                header = [p for p in parts if p != ""]
-            continue
-        if parts and parts[0].isdigit() and len(parts[0]) == 6:
-            rows.append(parts[: len(header) + 1])
-        elif rows:
+    """
+    Extrait le bloc MENSUEL d'un CSV Ken French.
+
+    Robuste :
+      - l'en-tête est repéré comme une vraie ligne CSV (un token de facteur
+        présent COMME CHAMP séparé par virgule, avec ≥2 champs) — on n'est donc
+        pas piégé par une ligne de prose contenant « Mom », « RF », etc. ;
+      - on collecte TOUTES les lignes dont la 1re cellule est une date YYYYMM
+        (6 chiffres), sans arrêt prématuré sur les lignes vides ;
+      - on s'arrête au bloc annuel (1re cellule à 4 chiffres = YYYY).
+    Valeurs manquantes -99.99 / -999 -> NaN. Données en %.
+    """
+    tokens = {"Mkt-RF", "SMB", "HML", "Mom", "WML", "RF"}
+    lines = text.splitlines()
+
+    header, start_i = None, 0
+    for i, line in enumerate(lines):
+        fields = [p.strip() for p in line.split(",")]
+        if len(fields) >= 2 and any(f in tokens for f in fields):
+            header = [f for f in fields if f != ""]
+            start_i = i + 1
             break
+    if header is None:
+        return pd.DataFrame()
+
+    rows = []
+    for line in lines[start_i:]:
+        fields = [p.strip() for p in line.split(",")]
+        d = fields[0]
+        if d.isdigit() and len(d) == 6:            # ligne mensuelle YYYYMM
+            rows.append(fields[: len(header) + 1])
+        elif d.isdigit() and len(d) == 4:          # bloc annuel atteint -> stop
+            break
+        # toute autre ligne (vide, 2e en-tête, prose) est ignorée, pas d'arrêt
+
+    if not rows:
+        return pd.DataFrame()
     df = pd.DataFrame(rows).set_index(0)
     df.columns = header[: df.shape[1]]
     df = df.apply(pd.to_numeric, errors="coerce").replace([-99.99, -999, -99.0], np.nan)
@@ -65,16 +92,71 @@ def _download_ff_zip(url: str, timeout: int = 30) -> str:
 # ----------------------------------------------------------------------
 # Sources
 # ----------------------------------------------------------------------
-def _from_cache() -> pd.DataFrame | None:
-    """Lit les CSV locaux s'ils existent (mode hors-ligne)."""
-    if Path(FF_3FACTOR_CSV).exists() and Path(FF_MOMENTUM_CSV).exists():
-        with open(FF_3FACTOR_CSV, "r", encoding="latin-1") as f:
-            ff3 = _parse_ff_csv_monthly(f.read())
-        with open(FF_MOMENTUM_CSV, "r", encoding="latin-1") as f:
-            mom = _parse_ff_csv_monthly(f.read())
-        mom.columns = ["UMD"]
-        return ff3.join(mom, how="inner")
+def _candidate_dirs() -> list[Path]:
+    """Emplacements plausibles des CSV FF, dédupliqués, dans l'ordre de priorité.
+    Couvre les décalages de répertoire de travail (notebook lancé ailleurs)."""
+    cwd = Path.cwd()
+    cands = [
+        Path(EXTERNAL_DIR),
+        Path(DATA_DIR), Path(DATA_DIR) / "external",
+        Path(DATA_PATH).resolve().parent, Path(DATA_PATH).resolve().parent / "external",
+        cwd, cwd / "data" / "external", cwd / "external",
+        cwd.parent / "data" / "external",
+    ]
+    seen, out = set(), []
+    for d in cands:
+        try:
+            rd = d.resolve()
+        except Exception:
+            continue
+        if rd not in seen and rd.is_dir():
+            seen.add(rd); out.append(rd)
+    return out
+
+
+def _find_one(directory: Path, patterns: list[str]) -> Path | None:
+    """1er CSV du dossier correspondant à l'un des motifs (insensible à la casse)."""
+    files = {f.name.lower(): f for f in directory.glob("*.csv")}
+    # correspondance exacte d'abord
+    for pat in patterns:
+        for low, f in files.items():
+            if low == pat.lower():
+                return f
+    # puis correspondance par sous-chaîne (gère suffixes de date, variantes)
+    keys = [p.lower().replace(".csv", "") for p in patterns]
+    for low, f in files.items():
+        if any(k in low for k in keys):
+            return f
     return None
+
+
+def find_ff_csvs() -> tuple[Path | None, Path | None]:
+    """Localise (3-factor, momentum) en balayant les emplacements candidats.
+    Renvoie (None, None) si introuvables."""
+    p3 = pm = None
+    for d in _candidate_dirs():
+        if p3 is None:
+            p3 = _find_one(d, ["F-F_Research_Data_Factors.csv",
+                               "F-F_Research_Data_Factors"])
+        if pm is None:
+            pm = _find_one(d, ["F-F_Momentum_Factor.csv", "F-F_Momentum_Factor",
+                               "Momentum"])
+        if p3 and pm:
+            break
+    return p3, pm
+
+
+def _from_cache() -> pd.DataFrame | None:
+    """Lit les CSV FF locaux où qu'ils soient (mode hors-ligne robuste)."""
+    p3, pm = find_ff_csvs()
+    if p3 is None or pm is None:
+        return None
+    with open(p3, "r", encoding="latin-1") as f:
+        ff3 = _parse_ff_csv_monthly(f.read())
+    with open(pm, "r", encoding="latin-1") as f:
+        mom = _parse_ff_csv_monthly(f.read())
+    mom.columns = ["UMD"]
+    return ff3.join(mom, how="inner")
 
 
 def _from_direct(write_cache: bool = True) -> pd.DataFrame:

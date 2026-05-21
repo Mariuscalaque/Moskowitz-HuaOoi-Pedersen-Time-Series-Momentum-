@@ -282,14 +282,43 @@ from .config import asset_class_of  # noqa: E402
 
 def build_vme_factor_matrix(vme: pd.DataFrame,
                             mkt_excess: pd.Series | None = None) -> pd.DataFrame:
-    """Table 3 Panel B : facteurs Value & Momentum Everywhere (AQR).
-    On retient les colonnes 'everywhere' (agrégées) si présentes, sinon tout.
-    Optionnellement on ajoute MKT en excès."""
-    cols = [c for c in vme.columns
-            if any(t in str(c).lower() for t in ("everywhere", "vme", "all"))]
-    X = vme[cols].copy() if cols else vme.copy()
+    """
+    Table 3 Panel B : facteurs « Value & Momentum Everywhere » (AQR).
+
+    Le papier régresse le TSMOM sur les facteurs DIVERSIFIÉS toutes classes :
+    VAL (value everywhere) et MOM (momentum everywhere) — soit, dans le fichier
+    AQR, les deux PREMIÈRES colonnes de facteurs.
+
+    Robuste au cas où le CSV a perdu ses en-têtes (colonnes 'nan', 'Unnamed…') :
+    on identifie VAL/MOM par nom si possible, sinon par POSITION (col 0 = VAL,
+    col 1 = MOM, convention du fichier AQR). On renomme en VAL_EVR / MOM_EVR.
+    """
+    cols = list(vme.columns)
+    val_col = mom_col = None
+    # 1) par nom exact si disponible
+    for c in cols:
+        cl = str(c).strip().upper()
+        if cl == "VAL" and val_col is None:
+            val_col = c
+        elif cl == "MOM" and mom_col is None:
+            mom_col = c
+    # 2) sinon par position (en-têtes perdus -> colonnes anonymes)
+    if val_col is None or mom_col is None:
+        anonymous = all(str(c).lower().startswith(("nan", "unnamed")) for c in cols)
+        if anonymous and len(cols) >= 2:
+            val_col, mom_col = cols[0], cols[1]
+    if val_col is None or mom_col is None:
+        raise ValueError(
+            "Facteurs VME : impossible d'identifier VAL/MOM everywhere. "
+            "Vérifiez le chargement du fichier AQR (en-têtes 'VAL','MOM')."
+        )
+    X = pd.DataFrame({
+        "VAL_EVR": pd.to_numeric(vme[val_col], errors="coerce"),
+        "MOM_EVR": pd.to_numeric(vme[mom_col], errors="coerce"),
+    })
     if mkt_excess is not None:
         X = X.join(mkt_excess.rename("MKT"), how="inner")
+        X = X[["MKT", "VAL_EVR", "MOM_EVR"]]
     return X.dropna()
 
 
@@ -353,27 +382,54 @@ def table4_across_class(tsmom_by_ac: pd.DataFrame,
 
 # ---- Table 5 Panel A : régression TSMOM(classe) sur XSMOM(classe) -----------
 
+def _reg_tsmom_on_xsmom(y: pd.Series, x: pd.Series) -> dict | None:
+    """Régression HAC (3 lags) de TSMOM (y) sur XSMOM (x). None si trop court."""
+    df = pd.concat([y.rename("y"), x.rename("XSMOM")], axis=1).dropna()
+    if len(df) < 24:
+        return None
+    m = sm.OLS(df["y"], sm.add_constant(df[["XSMOM"]])).fit(
+        cov_type="HAC", cov_kwds={"maxlags": 3})
+    return {
+        "Alpha (%)": m.params["const"] * 100,
+        "t(Alpha)": m.tvalues["const"],
+        "beta(XSMOM)": m.params["XSMOM"],
+        "t(XSMOM)": m.tvalues["XSMOM"],
+        "R2": m.rsquared, "N": int(m.nobs),
+    }
+
+
 def table5_tsmom_on_xsmom(tsmom_by_ac: pd.DataFrame,
-                          xsmom_by_ac: pd.DataFrame) -> pd.DataFrame:
-    """Pour chaque classe + ALL : régression HAC de TSMOM sur le XSMOM
-    correspondant. Renvoie alpha, beta(XSMOM), t-stats, R²."""
+                          xsmom_by_ac: pd.DataFrame,
+                          tsmom_all: pd.Series | None = None,
+                          xsmom_all: pd.Series | None = None) -> pd.DataFrame:
+    """
+    Table 5 Panel A : régression HAC de TSMOM sur XSMOM.
+
+    La ligne ALL (TSMOM diversifié ~ XSMOM diversifié) est la régression-phare
+    du papier (β≈0.66, t≈15.17, R²=44%) et figure EN PREMIER. Pour l'obtenir,
+    fournir `tsmom_all` (TSMOM diversifié toutes classes) et `xsmom_all` (XSMOM
+    diversifié) ; à défaut, on essaie une éventuelle colonne 'ALL' commune.
+    Suivent les régressions par classe d'actifs.
+    """
     rows = {}
-    for ac in tsmom_by_ac.columns:
-        if ac not in xsmom_by_ac.columns:
-            continue
-        df = pd.concat([tsmom_by_ac[ac].rename("y"),
-                        xsmom_by_ac[ac].rename("XSMOM")], axis=1).dropna()
-        if len(df) < 24:
-            continue
-        X = sm.add_constant(df[["XSMOM"]])
-        m = sm.OLS(df["y"], X).fit(cov_type="HAC", cov_kwds={"maxlags": 3})
-        rows[ac] = {
-            "Alpha (%)": m.params["const"] * 100,
-            "t(Alpha)": m.tvalues["const"],
-            "beta(XSMOM)": m.params["XSMOM"],
-            "t(XSMOM)": m.tvalues["XSMOM"],
-            "R2": m.rsquared, "N": int(m.nobs),
-        }
+
+    # --- ligne ALL (en premier, comme dans le papier) ---
+    if tsmom_all is None and "ALL" in tsmom_by_ac.columns:
+        tsmom_all = tsmom_by_ac["ALL"]
+    if xsmom_all is None and "ALL" in xsmom_by_ac.columns:
+        xsmom_all = xsmom_by_ac["ALL"]
+    if tsmom_all is not None and xsmom_all is not None:
+        r = _reg_tsmom_on_xsmom(tsmom_all, xsmom_all)
+        if r is not None:
+            rows["ALL"] = r
+
+    # --- lignes par classe d'actifs ---
+    for ac in ("Commodity", "Equity", "Bond", "Currency"):
+        if ac in tsmom_by_ac.columns and ac in xsmom_by_ac.columns:
+            r = _reg_tsmom_on_xsmom(tsmom_by_ac[ac], xsmom_by_ac[ac])
+            if r is not None:
+                rows[ac] = r
+
     return pd.DataFrame(rows).T
 
 
