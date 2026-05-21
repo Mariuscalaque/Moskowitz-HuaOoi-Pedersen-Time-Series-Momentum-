@@ -17,6 +17,20 @@ OUTPUT_DIR = PROJECT_ROOT / "outputs"
 TABLES_DIR = OUTPUT_DIR / "tables"
 FIGURES_DIR = OUTPUT_DIR / "figures"
 
+# Dossier des données (racine pour data.xlsx et les CSV externes mis en cache)
+DATA_DIR = Path(os.environ.get("TSMOM_DATA_DIR", PROJECT_ROOT / "data"))
+EXTERNAL_DIR = DATA_DIR / "external"
+
+# Repli hors-ligne des facteurs Fama-French : si ces CSV (téléchargés à la main
+# depuis le site de Ken French) existent, factors.py les lit AVANT toute tentative
+# de téléchargement. Le téléchargement réussi est aussi mis en cache ici.
+FF_3FACTOR_CSV = EXTERNAL_DIR / "F-F_Research_Data_Factors.csv"
+FF_MOMENTUM_CSV = EXTERNAL_DIR / "F-F_Momentum_Factor.csv"
+
+# Indices hedge funds Dow Jones / Credit Suisse (Table 5 Panel C). Données sous
+# licence : à fournir manuellement (colonnes : date, ManagedFutures, GlobalMacro).
+HEDGE_FUND_CSV = EXTERNAL_DIR / "djcs_hedge_fund_indices.csv"
+
 # ---------- Sample periods ----------
 # Paper sample (Moskowitz et al. 2012): Jan 1985 - Dec 2009
 PAPER_START = "1985-01-01"

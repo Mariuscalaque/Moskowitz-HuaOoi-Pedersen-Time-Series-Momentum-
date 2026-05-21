@@ -1,74 +1,74 @@
 """
-rollyield.py — Décomposition rendement futures = rendement spot + roll yield,
-pour la Table 6 de Moskowitz, Hua Ooi & Pedersen (2012).
+rollyield.py — Décomposition rendement futures = variation du prix « spot » +
+roll return, pour la Table 6 de Moskowitz, Ooi & Pedersen (2012), Section 6.3.
 
-Idée : pour un contrat à terme, le rendement total de la position « front month
-roulé » se décompose en une composante « prix spot » et une composante « roll »
-(structure de la courbe). On approxime, à partir des prix de 1re (F1) et 2e (F2)
-échéance disponibles dans data.xlsx (colonnes …1 Comdty / …2 Comdty) :
+CORRECTION : on implémente désormais la VRAIE décomposition du papier, et non
+plus un proxy de pente de courbe. Le papier pose l'identité comptable
 
-    roll_yield_t ≈ (F1_t - F2_t) / F2_t           (positif en backwardation)
-    r_total_t    ≈ %variation de F1               (rendement futures)
-    r_spot_t     ≈ r_total_t - roll_yield_t        (résidu = variation « prix »)
+    Futures return_{t-12,t} = Price change_{t-12,t} + Roll return_{t-12,t}
 
-La Table 6 régresse le rendement futures mensuel sur :
-  - « Full TSMOM »   : rendement total des 12 derniers mois,
-  - « Spot price MOM »: variation spot des 12 derniers mois,
-  - « Roll MOM »      : roll return des 12 derniers mois,
-  - (+ positions spéculateurs CFTC, fournies à part).
+où « Price change » est la variation du prix du contrat le plus proche de
+l'échéance (nearest-to-expiration), et « Futures return » est le rendement
+RÉELLEMENT investi (donc roulé). Le roll return est le résidu.
+
+Mise en œuvre, à partir des prix M1 (front) et du rendement roulé déjà calculé
+par `returns.py` :
+    r_total = rendement futures roulé (investable)            -> components['total']
+    r_spot  = variation du prix front non roulée (niveau M1)  -> components['spot']
+    r_roll  = r_total - r_spot                                -> components['roll']
+
+Le « spot » capte l'information (variation du niveau de prix) ; le « roll »
+capte la pente de la courbe / pression de couverture. Sur les futures
+financiers le roll est proche de zéro ; sur les commodities il peut être
+substantiel (backwardation/contango).
 """
 
 import pandas as pd
 import numpy as np
 
-# Paires (front, second) détectées automatiquement, mais on liste les
-# correspondances « X1 -> X2 » par substitution du chiffre d'échéance.
-def _second_contract_name(front: str) -> str | None:
-    """'CL1 Comdty' -> 'CL2 Comdty', 'C 1 Comdty' -> 'C 2 Comdty'."""
-    if "1 Comdty" in front:
-        return front.replace("1 Comdty", "2 Comdty")
-    return None
+from .returns import futures_daily_excess_returns, safe_pct_change
+from .config import COMMODITY_FUTURES, BOND_FUTURES, EQUITY_FUTURES
 
 
-def available_roll_pairs(prices: pd.DataFrame) -> dict:
-    """Renvoie {front_ticker: second_ticker} pour les contrats ayant un M2."""
-    pairs = {}
-    for c in prices.columns:
-        c2 = _second_contract_name(c)
-        if c2 and c2 in prices.columns:
-            pairs[c] = c2
-    return pairs
+def _front_price_change_daily(prices: pd.DataFrame, cols: list) -> pd.DataFrame:
+    """Variation journalière du NIVEAU de prix du contrat front (non roulée).
+    Sert de proxy « spot price change » au sens de MOP §6.3."""
+    out = {}
+    for c in cols:
+        if c in prices.columns:
+            out[c] = safe_pct_change(prices[c])
+    return pd.DataFrame(out)
 
 
 def spot_roll_monthly(prices: pd.DataFrame) -> dict:
     """
-    Construit trois DataFrames mensuels (fin de mois) alignés :
-      'total' : rendement futures total (%var F1, composé en mensuel),
-      'roll'  : roll yield mensuel (moyenne du basis (F1-F2)/F2 sur le mois),
-      'spot'  : rendement spot ≈ total - roll.
-    Limité aux instruments disposant d'un contrat M2.
+    Trois DataFrames mensuels (fin de mois) alignés et cohérents avec
+    l'identité Futures = Spot + Roll :
+      'total' : rendement futures ROULÉ (investable),
+      'spot'  : variation du prix front (niveau M1, non roulée),
+      'roll'  : roll return = total - spot.
     """
-    pairs = available_roll_pairs(prices)
-    f1 = prices[list(pairs.keys())]
-    f2 = prices[[pairs[c] for c in pairs]].copy()
-    f2.columns = list(pairs.keys())   # aligne les noms sur le front
+    cols = list(EQUITY_FUTURES) + list(BOND_FUTURES) + list(COMMODITY_FUTURES)
+    cols = [c for c in cols if c in prices.columns]
 
-    # rendement total journalier puis mensuel
-    daily_total = f1.pct_change()
+    # rendement total = rendement roulé (réutilise la logique corrigée de returns.py)
+    daily_total = futures_daily_excess_returns(prices)[cols]
     monthly_total = (1 + daily_total).resample("ME").prod() - 1
 
-    # roll yield journalier = (F1 - F2)/F2 ; on agrège en mensuel par la moyenne
-    daily_roll = (f1 - f2) / f2
-    monthly_roll = daily_roll.resample("ME").mean()
+    # variation spot = niveau du prix front, non roulé
+    daily_spot = _front_price_change_daily(prices, cols)
+    monthly_spot = (1 + daily_spot).resample("ME").prod() - 1
 
-    monthly_spot = monthly_total - monthly_roll
+    monthly_spot = monthly_spot.reindex(columns=monthly_total.columns)
+    monthly_roll = monthly_total - monthly_spot
     return {"total": monthly_total, "roll": monthly_roll, "spot": monthly_spot}
 
 
 def momentum_signals_12m(components: dict, k: int = 12) -> dict:
-    """Pour chaque composante (total/spot/roll), renvoie le cumul des k mois."""
+    """Pour chaque composante (total/spot/roll), rendement cumulé (somme) des
+    k derniers mois — le signal de la Table 6 (« Full / Spot / Roll MOM »).
+    On somme (cohérent avec l'identité additive total = spot + roll)."""
     out = {}
     for key, df in components.items():
-        log = np.log1p(df.clip(lower=-0.999))
-        out[key] = np.expm1(log.rolling(k).sum())
+        out[key] = df.rolling(k).sum()
     return out

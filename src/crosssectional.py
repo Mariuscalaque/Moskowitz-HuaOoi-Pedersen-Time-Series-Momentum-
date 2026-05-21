@@ -1,19 +1,24 @@
 """
-crosssectional.py — Cross-sectional momentum (XSMOM) et décomposition
-des profits, pour la Table 5 de Moskowitz, Hua Ooi & Pedersen (2012).
+crosssectional.py — Momentum cross-sectionnel (XSMOM) et décomposition de
+Lo & MacKinlay (1990) telle qu'utilisée par Moskowitz, Ooi & Pedersen (2012),
+Section 5.2, Eq. (6)-(7), pour la Table 5 Panel B.
 
-XSMOM : à chaque fin de mois t, on classe les instruments par leur rendement
-cumulé des 12 derniers mois et on prend des poids dollar-neutres proportionnels
-au rang dé-moyenné (construction de type Asness-Moskowitz-Pedersen). Le
-rendement t+1 est la somme pondérée des rendements des instruments.
+CORRECTION : la décomposition respecte désormais la structure du papier —
+le SIGNAL est le rendement cumulé des 12 derniers mois, la CIBLE est le
+rendement du mois suivant (t+1). On définit la matrice de comoments
 
-Décomposition (Panel B) : on utilise le cadre de Lo & MacKinlay (1990) repris
-par MOP en Section 4.2. Le profit espéré d'une stratégie de momentum relatif
-se décompose en :
-   - Auto   : contribution des AUTO-covariances (un actif prédit lui-même),
-   - Cross  : contribution des covariances CROISÉES / effets lead-lag,
-   - Mean   : contribution de la dispersion des moyennes inconditionnelles.
-On vérifie l'identité comptable : Auto + Cross + Mean ≈ profit empirique moyen.
+    Ω = E[(R_{t-12,t} - 12μ)(r_{t,t+1} - μ)']            (N×N)
+
+avec μ_i = E(r_{i,t,t+1}) = E(R_{i,t-12,t})/12 (exact si R_{t-12,t} est la
+SOMME des 12 rendements mensuels). Alors (Eq. 6 / 7) :
+
+  XSMOM (poids w_i = (1/N)(R_{i,t-12,t} - R̄_t)) :
+     E[π^XS] = (N-1)/N²·tr(Ω) − (1/N²)(1'Ω1 − tr(Ω)) + 12·s²_μ
+             =     Auto       +         Cross          +   Mean
+
+  TSMOM (poids w_i = (1/N)·R_{i,t-12,t}) :
+     E[π^TS] = tr(Ω)/N + 12·(μ'μ)/N
+             =   Auto   +   Mean-squared
 """
 
 import numpy as np
@@ -24,35 +29,28 @@ from .config import LOOKBACK_MONTHS, asset_class_of
 
 
 # ============================================================================
-# Construction XSMOM
+# Construction XSMOM (inchangée : rang dé-moyené, dollar-neutre)
 # ============================================================================
 def xsmom_weights(monthly_ret: pd.DataFrame, k: int = LOOKBACK_MONTHS) -> pd.DataFrame:
-    """
-    Poids dollar-neutres de la stratégie de momentum cross-sectionnel.
-
-    À chaque date, w_i ∝ (rang_i - rang_moyen), normalisés pour que la somme
-    des poids longs vaille +1 (et donc des shorts -1). Les poids sont calés à
-    la fin du mois t (ils s'appliquent au rendement t+1 via un shift en aval).
-    """
+    """Poids dollar-neutres ∝ (rang - rang moyen) du rendement passé k mois,
+    normalisés pour une jambe longue de +1 (et courte de -1)."""
     past = past_k_month_returns(monthly_ret, k=k)
-    # rang transversal (méthode 'average'), normalisé entre ~0 et 1
     ranks = past.rank(axis=1, method="average")
     demeaned = ranks.sub(ranks.mean(axis=1), axis=0)
-    # normalise : somme des poids positifs = 1
     pos_sum = demeaned.clip(lower=0).sum(axis=1).replace(0, np.nan)
     w = demeaned.div(pos_sum, axis=0)
     return w.where(past.notna())
 
 
 def xsmom_returns(monthly_ret: pd.DataFrame, k: int = LOOKBACK_MONTHS) -> pd.Series:
-    """Rendement XSMOM (toutes classes) : Σ_i w_{i,t} · r_{i,t+1}."""
+    """Rendement XSMOM : Σ_i w_{i,t} · r_{i,t+1}."""
     w = xsmom_weights(monthly_ret, k=k)
     return (w.shift(1) * monthly_ret).sum(axis=1, min_count=1)
 
 
 def xsmom_by_asset_class(monthly_ret: pd.DataFrame,
                          k: int = LOOKBACK_MONTHS) -> pd.DataFrame:
-    """XSMOM construit séparément à l'intérieur de chaque classe d'actifs."""
+    """XSMOM construit séparément dans chaque classe + ALL."""
     classes = {c: asset_class_of(c) for c in monthly_ret.columns}
     out = {}
     for ac in ("Commodity", "Equity", "Bond", "Currency"):
@@ -64,70 +62,84 @@ def xsmom_by_asset_class(monthly_ret: pd.DataFrame,
 
 
 # ============================================================================
-# Décomposition de Lo-MacKinlay (Panel B)
+# Décomposition Lo-MacKinlay 12→1 (Panel B), conforme à MOP Eq. (6)-(7)
 # ============================================================================
 def lo_mackinlay_decomposition(monthly_ret: pd.DataFrame,
-                               k: int = 1) -> dict:
+                               lookback: int = LOOKBACK_MONTHS) -> dict:
     """
-    Décomposition du profit espéré de la stratégie de momentum relatif à poids
-    w_{i,t} = (1/N)(r_{i,t-k} - r̄_{t-k}) appliqués au rendement r_{i,t}.
+    Décomposition des profits XSMOM et TSMOM 12→1 selon Eq. (6)-(7).
 
-    E[π] = Auto + Cross + Mean, avec (Lo & MacKinlay, 1990) :
-        Auto  = (N-1)/N² · Σ_i  Cov(r_{i,t}, r_{i,t-k})           (own-serial)
-        Cross = -(1/N²) · Σ_{i≠j} Cov(r_{i,t}, r_{j,t-k})         (lead-lag)
-        Mean  = (N-1)/N² · Σ_i (μ_i - μ̄)²  = (N-1)/N · Var_x(μ)   (dispersion)
-
-    On calcule sur le panneau des instruments présents en continu pour avoir une
-    matrice de covariance bien définie. Renvoie les composantes + le profit
-    empirique moyen (pour vérifier l'identité).
+    `monthly_ret` : rendements mensuels (instruments en colonnes). On retient le
+    panneau d'instruments présents en continu pour une matrice Ω bien définie.
+    Renvoie les composantes XSMOM (Auto/Cross/Mean) et TSMOM (Auto/MeanSq) ainsi
+    que les profits empiriques correspondants (pour vérifier l'identité).
     """
     R = monthly_ret.dropna(axis=1, how="any").dropna(axis=0, how="any")
-    if R.shape[1] < 2 or len(R) < k + 12:
-        return {"Auto": np.nan, "Cross": np.nan, "Mean": np.nan,
-                "Total (sum)": np.nan, "Total (empirical)": np.nan, "N": R.shape[1]}
-
     N = R.shape[1]
-    Rt = R.iloc[k:].values            # r_{i,t}
-    Rtk = R.iloc[:-k].values          # r_{i,t-k}
-    T = Rt.shape[0]
+    if N < 2 or len(R) < lookback + 24:
+        nan = float("nan")
+        return {k: nan for k in
+                ("XS_Auto", "XS_Cross", "XS_Mean", "XS_Total(sum)", "XS_Total(emp)",
+                 "TS_Auto", "TS_MeanSq", "TS_Total(sum)", "TS_Total(emp)")} | {"N": N}
 
-    mu = R.mean().values
+    # rendement cumulé (SOMME) des 12 derniers mois, connu en fin de mois t
+    R12 = R.rolling(lookback).sum()
+    # cible : rendement du mois t+1
+    r1_next = R.shift(-1)
+
+    # alignement signal_t -> cible_{t+1}
+    df = pd.concat({"sig": R12, "tgt": r1_next}, axis=1).dropna()
+    sig = df["sig"].values          # T×N  (R_{t-12,t})
+    tgt = df["tgt"].values          # T×N  (r_{t,t+1})
+    T = sig.shape[0]
+
+    mu = tgt.mean(axis=0)           # μ_i = E(r_{t,t+1})
     mu_bar = mu.mean()
 
-    # matrice de covariance "lag-k" : Gamma[i,j] = Cov(r_{i,t}, r_{j,t-k})
-    Rt_c = Rt - Rt.mean(0)
-    Rtk_c = Rtk - Rtk.mean(0)
-    Gamma = (Rt_c.T @ Rtk_c) / (T - 1)        # N×N
+    # Ω = (1/T) Σ (R12_t - 12μ)(r1_{t+1} - μ)'
+    A = sig - 12.0 * mu             # T×N
+    B = tgt - mu                    # T×N
+    Omega = (A.T @ B) / T           # N×N
 
-    own = np.trace(Gamma)
-    cross = Gamma.sum() - own
+    trO = np.trace(Omega)
+    sumO = Omega.sum()
+    s2_mu = np.mean((mu - mu_bar) ** 2)        # variance transversale des μ_i
 
-    auto_term = (N - 1) / N**2 * own
-    cross_term = -(1.0 / N**2) * cross
-    mean_term = (N - 1) / N * np.var(mu, ddof=0)
+    # ---- XSMOM ----
+    xs_auto = (N - 1) / N**2 * trO
+    xs_cross = -(1.0 / N**2) * (sumO - trO)
+    xs_mean = 12.0 * s2_mu
+    xs_sum = xs_auto + xs_cross + xs_mean
 
-    # profit empirique moyen de la stratégie LM (poids 1/N · (r_{t-k} - r̄))
-    w = (Rtk - Rtk.mean(1, keepdims=True)) / N
-    pi = (w * Rt).sum(1)
+    # ---- TSMOM ----
+    ts_auto = trO / N
+    ts_meansq = 12.0 * (mu @ mu) / N
+    ts_sum = ts_auto + ts_meansq
+
+    # ---- profits empiriques (mêmes poids que dans les équations) ----
+    sig_bar = sig.mean(axis=1, keepdims=True)
+    w_xs = (sig - sig_bar) / N
+    pi_xs = (w_xs * tgt).sum(axis=1)
+    w_ts = sig / N
+    pi_ts = (w_ts * tgt).sum(axis=1)
 
     return {
-        "Auto": auto_term,
-        "Cross": cross_term,
-        "Mean": mean_term,
-        "Total (sum)": auto_term + cross_term + mean_term,
-        "Total (empirical)": float(pi.mean()),
+        "XS_Auto": xs_auto, "XS_Cross": xs_cross, "XS_Mean": xs_mean,
+        "XS_Total(sum)": xs_sum, "XS_Total(emp)": float(pi_xs.mean()),
+        "TS_Auto": ts_auto, "TS_MeanSq": ts_meansq,
+        "TS_Total(sum)": ts_sum, "TS_Total(emp)": float(pi_ts.mean()),
         "N": N,
     }
 
 
 def decomposition_by_asset_class(monthly_ret: pd.DataFrame,
-                                 k: int = 1) -> pd.DataFrame:
-    """Applique la décomposition Lo-MacKinlay à chaque classe puis à l'ensemble."""
+                                 lookback: int = LOOKBACK_MONTHS) -> pd.DataFrame:
+    """Applique la décomposition 12→1 à chaque classe puis à l'ensemble."""
     classes = {c: asset_class_of(c) for c in monthly_ret.columns}
     rows = {}
     for ac in ("Commodity", "Equity", "Bond", "Currency"):
         cols = [c for c, a in classes.items() if a == ac]
         if len(cols) >= 2:
-            rows[ac] = lo_mackinlay_decomposition(monthly_ret[cols], k=k)
-    rows["ALL"] = lo_mackinlay_decomposition(monthly_ret, k=k)
+            rows[ac] = lo_mackinlay_decomposition(monthly_ret[cols], lookback=lookback)
+    rows["ALL"] = lo_mackinlay_decomposition(monthly_ret, lookback=lookback)
     return pd.DataFrame(rows).T

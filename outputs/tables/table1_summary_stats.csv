@@ -1,28 +1,28 @@
 Asset class,Instrument,Ticker,Start,Ann. mean,Ann. vol,N months
 Commodity,Aluminum,LMAHDS03 Comdty,1985-01,0.0347,0.1977,300
-Commodity,Brent Crude,CO1 Comdty,1985-01,0.1121,0.3124,300
-Commodity,Cocoa,CC1 Comdty,1985-01,0.0639,0.3048,300
-Commodity,Coffee,KC1 Comdty,1985-01,0.0721,0.3952,300
+Commodity,Brent Crude,CO1 Comdty,1985-01,0.1606,0.3253,300
+Commodity,Cocoa,CC1 Comdty,1985-01,0.0531,0.2950,300
+Commodity,Coffee,KC1 Comdty,1985-01,0.0851,0.3855,300
 Commodity,Copper,LMCADS03 Comdty,1985-01,0.0970,0.2542,300
-Commodity,Corn,C 1 Comdty,1985-01,0.0557,0.2776,300
-Commodity,Cotton,CT1 Comdty,1985-01,0.0559,0.3071,300
-Commodity,Gas Oil,QS1 Comdty,1985-01,0.1077,0.3156,300
+Commodity,Corn,C 1 Comdty,1985-01,0.0543,0.2583,300
+Commodity,Cotton,CT1 Comdty,1985-01,0.0419,0.2664,300
+Commodity,Gas Oil,QS1 Comdty,1985-01,0.1633,0.3101,300
 Commodity,Gold,GC1 Comdty,1985-01,0.0617,0.1499,300
-Commodity,Heating Oil,HO1 Comdty,1985-01,0.1405,0.3792,300
-Commodity,Lean Hogs,LH1 Comdty,1985-01,0.0728,0.3367,300
-Commodity,Live Cattle,LC1 Comdty,1985-01,0.0242,0.1670,300
-Commodity,Natural Gas,NG1 Comdty,1985-01,0.1789,0.5189,300
+Commodity,Heating Oil,HO1 Comdty,1985-01,0.2622,0.3667,300
+Commodity,Lean Hogs,LH1 Comdty,1985-01,0.0664,0.2607,300
+Commodity,Live Cattle,LC1 Comdty,1985-01,0.0783,0.1553,300
+Commodity,Natural Gas,NG1 Comdty,1985-01,0.0960,0.5507,300
 Commodity,Nickel,LMNIDS03 Comdty,1985-01,0.1577,0.4218,300
-Commodity,Platinum,PL1 Comdty,1985-01,0.0747,0.2148,300
-Commodity,RBOB Gasoline,XB1 Comdty,1985-01,0.0238,0.1991,300
-Commodity,Silver,SI1 Comdty,1985-01,0.0724,0.2609,300
-Commodity,Soy Meal,SM1 Comdty,1985-01,0.0707,0.2753,300
-Commodity,Soy Oil,BO1 Comdty,1985-01,0.0520,0.2602,300
-Commodity,Soybeans,S 1 Comdty,1985-01,0.0542,0.2432,300
-Commodity,Sugar,SB1 Comdty,1985-01,0.1506,0.4127,300
-Commodity,Unleaded Gasoline,HU1 Comdty,1985-01,0.1261,0.3856,300
-Commodity,WTI Crude,CL1 Comdty,1985-01,0.1044,0.3501,300
-Commodity,Wheat,W 1 Comdty,1985-01,0.0540,0.2703,300
+Commodity,Platinum,PL1 Comdty,1985-01,0.0952,0.2225,300
+Commodity,RBOB Gasoline,XB1 Comdty,1985-01,0.0254,0.1871,300
+Commodity,Silver,SI1 Comdty,1985-01,0.0704,0.2622,300
+Commodity,Soy Meal,SM1 Comdty,1985-01,0.1566,0.2745,300
+Commodity,Soy Oil,BO1 Comdty,1985-01,0.0660,0.2576,300
+Commodity,Soybeans,S 1 Comdty,1985-01,0.1338,0.2334,300
+Commodity,Sugar,SB1 Comdty,1985-01,0.0587,0.3587,300
+Commodity,Unleaded Gasoline,HU1 Comdty,1985-01,0.2067,0.3733,300
+Commodity,WTI Crude,CL1 Comdty,1985-01,0.1657,0.3700,300
+Commodity,Wheat,W 1 Comdty,1985-01,0.1027,0.2783,300
 Commodity,Zinc,LMZSDS03 Comdty,1985-01,0.0425,0.2216,300
 Equity,AEX (NL),EO1 Index,1985-01,0.0592,0.1854,300
 Equity,ASX SPI 200 (AUS),XP1 Index,1985-01,0.0212,0.0843,300

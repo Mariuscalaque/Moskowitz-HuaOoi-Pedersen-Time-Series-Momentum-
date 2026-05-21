@@ -195,7 +195,7 @@ def run(start: str = PAPER_START, end: str = PAPER_END,
     # TABLE 5 — A (TSMOM~XSMOM), B (decomposition), C (what TSMOM explains)
     # ============================================================
     t5a = table5_tsmom_on_xsmom(tsmom_ac.loc[m], xsmom_ac.loc[m])
-    t5b = decomposition_by_asset_class(mret, k=1)
+    t5b = decomposition_by_asset_class(mret, lookback=LOOKBACK_MONTHS)
     t5c = pd.DataFrame()
     targets = {}
     # facteurs FF + indices hedge funds externes si dispo
@@ -209,6 +209,16 @@ def run(start: str = PAPER_START, end: str = PAPER_END,
     if "hedge_funds" in ext:
         for c in ext["hedge_funds"].columns:
             targets[f"HF {c}"] = ext["hedge_funds"][c]
+    else:
+        # repli : CSV hedge funds déposé manuellement (données sous licence)
+        try:
+            from .factors import load_hedge_fund_indices
+            hf = load_hedge_fund_indices()
+            if hf is not None:
+                for c in hf.columns:
+                    targets[f"HF {c}"] = hf[c]
+        except Exception:
+            pass
     if targets:
         t5c = table5_what_tsmom_explains(targets, tsmom_p)
     tables.table5_save(t5a, t5b, t5c if len(t5c) else None)
