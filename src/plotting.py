@@ -30,6 +30,9 @@ plt.rcParams.update({
 def _save(fig: plt.Figure, name: str):
     path = FIGURES_DIR / f"{name}.png"
     fig.savefig(path, dpi=180, bbox_inches="tight")
+    # Ferme la figure : sinon, sous %matplotlib inline, Jupyter l'affiche
+    # automatiquement EN PLUS du display(Image(...)) -> graphique en double.
+    plt.close(fig)
     return path
 
 
@@ -198,9 +201,15 @@ def figure_drawdown(tsmom: pd.Series, save_name: str = "fig5_drawdown"):
 # Figure 5 — Positions nettes des spéculateurs
 # -----------------------------------------------------------------------
 
-def figure5_net_speculator(net_spec: pd.DataFrame, save_name: str = "fig5_net_speculator"):
+def figure5_net_speculator(net_spec: pd.DataFrame, save_name: str = "fig5_net_speculator",
+                           min_periods: int = 24):
     """Position nette moyenne des spéculateurs (% open interest) par instrument,
-    moyennée sur l'échantillon, colorée par classe d'actifs."""
+    moyennée sur l'échantillon, colorée par classe d'actifs.
+
+    Renvoie None si l'historique CFTC est trop court (< min_periods dates) : un
+    fichier d'une seule ligne donnerait une « moyenne » = instantané trompeur."""
+    if net_spec is None or len(net_spec.dropna(how="all")) < min_periods:
+        return None
     means = net_spec.mean().dropna().sort_values()
     if means.empty:
         return None
@@ -224,7 +233,9 @@ def figure6_event_study(returns_paths: pd.DataFrame,
                         save_name: str = "fig6_event_study"):
     """Panel A : rendement cumulé moyen autour d'événements TSMOM +/-.
     Panel B (si fourni) : position nette moyenne des spéculateurs."""
-    n = 2 if (positions_paths is not None and not positions_paths.empty) else 1
+    has_pos = (positions_paths is not None and not positions_paths.empty
+               and positions_paths[["positive", "negative"]].notna().any().any())
+    n = 2 if has_pos else 1
     fig, axes = plt.subplots(1, n, figsize=(7 * n, 5))
     axes = np.atleast_1d(axes)
 

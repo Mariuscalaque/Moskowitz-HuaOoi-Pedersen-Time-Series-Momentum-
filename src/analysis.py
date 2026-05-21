@@ -496,6 +496,11 @@ def table6_predictors(total_ret: pd.DataFrame,
     specs["(2) Spot+Roll"] = _pooled_predictive(
         total_ret, {"SpotMOM": sig_spot, "RollMOM": sig_roll})
 
+    # Garde-fou : un historique CFTC trop court (ex. 1 ligne) ne permet pas les
+    # spécifications avec positions -> on les omet plutôt que d'afficher du vide.
+    if net_spec is not None and len(net_spec.dropna(how="all")) < 24:
+        net_spec = None
+
     if net_spec is not None:
         ns = net_spec.reindex_like(sig_total)
         d_ns = ns.diff()
@@ -613,20 +618,20 @@ def impulse_response(monthly_ret: pd.DataFrame,
                            net_spec[c].rename("pos")], axis=1).dropna()
             if len(d) > lags + 10:
                 stacked.append(d)
-        if not stacked:
-            return None
-        data = pd.concat(stacked, axis=0).reset_index(drop=True)
-        model = VAR(data).fit(lags)
-        irf = model.irf(horizon)
-        # choc sur 'ret' -> réponses cumulées de ret et pos
-        cum = irf.cum_effects  # shape (horizon+1, neq, neq)
-        ret_idx, pos_idx = 0, 1
-        out = pd.DataFrame({
-            "cum_return": cum[:, ret_idx, ret_idx],
-            "cum_position": cum[:, pos_idx, ret_idx],
-        })
-        out.index.name = "horizon"
-        return out
+        if stacked:
+            data = pd.concat(stacked, axis=0).reset_index(drop=True)
+            model = VAR(data).fit(lags)
+            irf = model.irf(horizon)
+            # choc sur 'ret' -> réponses cumulées de ret et pos
+            cum = irf.cum_effects  # shape (horizon+1, neq, neq)
+            ret_idx, pos_idx = 0, 1
+            out = pd.DataFrame({
+                "cum_return": cum[:, ret_idx, ret_idx],
+                "cum_position": cum[:, pos_idx, ret_idx],
+            })
+            out.index.name = "horizon"
+            return out
+        # net_spec fourni mais inexploitable (ex. CFTC = 1 ligne) -> repli univarié
 
     # repli univarié
     series = (monthly_ret[instrument].dropna() if instrument
