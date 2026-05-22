@@ -26,16 +26,24 @@ substantiel (backwardation/contango).
 import pandas as pd
 import numpy as np
 
-from .returns import futures_daily_excess_returns, safe_pct_change
-from .config import COMMODITY_FUTURES, BOND_FUTURES, EQUITY_FUTURES
+from .returns import (futures_daily_excess_returns, safe_pct_change,
+                      yield_quoted_bond_return)
+from .config import (COMMODITY_FUTURES, BOND_FUTURES, EQUITY_FUTURES,
+                     YIELD_QUOTED_BONDS)
 
 
 def _front_price_change_daily(prices: pd.DataFrame, cols: list) -> pd.DataFrame:
     """Variation journalière du NIVEAU de prix du contrat front (non roulée).
-    Sert de proxy « spot price change » au sens de MOP §6.3."""
+    Sert de proxy « spot price change » au sens de MOP §6.3. Les obligations
+    cotées en rendement (AUS) utilisent la même conversion duration que le total,
+    de sorte que le roll y soit nul (cohérent : pas de roll sur un financier)."""
     out = {}
     for c in cols:
-        if c in prices.columns:
+        if c not in prices.columns:
+            continue
+        if c in YIELD_QUOTED_BONDS:
+            out[c] = yield_quoted_bond_return(prices[c], YIELD_QUOTED_BONDS[c])
+        else:
             out[c] = safe_pct_change(prices[c])
     return pd.DataFrame(out)
 

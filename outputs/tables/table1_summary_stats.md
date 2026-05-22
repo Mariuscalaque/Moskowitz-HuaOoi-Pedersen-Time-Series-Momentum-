@@ -34,7 +34,7 @@
 | ('Equity', 'IBEX 35 (ES)')         | IB1 Index       | 1985-01 |       0.082 |      0.179 |        300 |
 | ('Equity', 'S&P 500 (US)')         | SP1 Index       | 1985-01 |       0.088 |      0.157 |        300 |
 | ('Equity', 'TOPIX (JP)')           | TP1 Index       | 1985-01 |      -0.023 |      0.178 |        300 |
-| ('Bond', '10Y AUS')                | XM1 Comdty      | 1985-01 |       0.003 |      0.012 |        300 |
+| ('Bond', '10Y AUS')                | XM1 Comdty      | 1985-01 |       0.018 |      0.079 |        300 |
 | ('Bond', '10Y CAN')                | CN1 Comdty      | 1985-01 |       0.010 |      0.066 |        300 |
 | ('Bond', '10Y EURO (Bund)')        | RX1 Comdty      | 1985-01 |       0.016 |      0.045 |        300 |
 | ('Bond', '10Y JP')                 | JB1 Comdty      | 1985-01 |       0.014 |      0.059 |        300 |
@@ -44,7 +44,7 @@
 | ('Bond', '2Y US')                  | TU1 Comdty      | 1985-01 |       0.004 |      0.018 |        300 |
 | ('Bond', '30Y EURO (Buxl)')        | UB1 Comdty      | 1985-01 |      -0.005 |      0.076 |        300 |
 | ('Bond', '30Y US')                 | US1 Comdty      | 1985-01 |       0.026 |      0.110 |        300 |
-| ('Bond', '3Y AUS')                 | YM1 Comdty      | 1985-01 |       0.004 |      0.013 |        300 |
+| ('Bond', '3Y AUS')                 | YM1 Comdty      | 1985-01 |       0.007 |      0.025 |        300 |
 | ('Bond', '5Y EURO (Bobl)')         | OE1 Comdty      | 1985-01 |       0.010 |      0.029 |        300 |
 | ('Bond', '5Y US')                  | FV1 Comdty      | 1985-01 |       0.008 |      0.045 |        300 |
 | ('Currency', 'AUD/USD')            | AUDUSD Curncy   | 1985-01 |       0.021 |      0.094 |        300 |

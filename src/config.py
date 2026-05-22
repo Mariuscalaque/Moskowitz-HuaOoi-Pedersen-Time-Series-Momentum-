@@ -65,6 +65,17 @@ EQUITY_FUTURES = {
     "SP1 Index": "S&P 500 (US)",
 }
 
+# Futures obligataires cotés en « 100 − rendement » (convention australienne) :
+# un pct_change sur la cote ne donne PAS un rendement obligataire. On convertit
+# via r ≈ D · Δcote/100 (Δyield = −Δcote), avec la duration-cible de MOP App. A.2
+# (2 ans pour le 3Y, 7 ans pour le 10Y). Le signe est identique au pct_change,
+# donc le TSMOM (sign × 40%/σ × r) est inchangé ; seules les stats brutes
+# (Table 1) sont corrigées.
+YIELD_QUOTED_BONDS = {
+    "YM1 Comdty": 2,   # 3Y AUS -> duration 2 ans
+    "XM1 Comdty": 7,   # 10Y AUS -> duration 7 ans
+}
+
 BOND_FUTURES = {
     "YM1 Comdty": "3Y AUS",
     "XM1 Comdty": "10Y AUS",

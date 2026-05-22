@@ -595,49 +595,86 @@ def impulse_response(monthly_ret: pd.DataFrame,
                      net_spec: pd.DataFrame | None = None,
                      instrument: str | None = None,
                      horizon: int = 36,
-                     lags: int = 2) -> pd.DataFrame | None:
+                     lags: int = 24,
+                     diff_positions: bool = True) -> pd.DataFrame | None:
     """
     Réponse impulsionnelle cumulée à un choc de +1 écart-type sur le rendement.
-    - Si `net_spec` est fourni : VAR bivarié [rendement, position nette spéc.]
-      sur le pool empilé (ou un instrument donné).
-    - Sinon : AR univarié sur les rendements (réponse cumulée des rendements).
-    Renvoie un DataFrame indexé par l'horizon (cumulé).
-    """
-    try:
-        from statsmodels.tsa.api import VAR
-        from statsmodels.tsa.ar_model import AutoReg
-    except Exception:
-        return None
 
+    Conforme à MOP (2012, §6.2) : VAR mensuel bivarié [rendement, *variation* de
+    la position nette des spéculateurs] avec 24 retards (le papier insiste sur la
+    nécessité de >12 retards pour capter la réversion retardée), décomposition de
+    Cholesky avec le rendement ordonné en premier.
+
+    Estimation en PANEL À COEFFICIENTS COMMUNS : les retards sont construits
+    À L'INTÉRIEUR de chaque instrument (jamais à cheval sur deux contrats), puis
+    empilés et estimés par MCO équation par équation. C'est exactement
+    l'hypothèse du papier (« coefficients are the same across all contracts »),
+    et cela évite la contamination des frontières inter-instruments d'un simple
+    `concat().reset_index()`.
+
+    - Si `net_spec` est fourni : VAR bivarié -> cum_return + cum_position.
+    - Sinon : AR(p) univarié sur les rendements -> cum_return seul.
+    Renvoie un DataFrame indexé par l'horizon (réponses cumulées).
+    """
     if net_spec is not None:
         cols = ([instrument] if instrument else
                 [c for c in net_spec.columns if c in monthly_ret.columns])
-        stacked = []
+        # Séries bivariées par instrument (positions différenciées comme le papier)
+        Ys = []
         for c in cols:
+            pos = net_spec[c].diff() if diff_positions else net_spec[c]
             d = pd.concat([monthly_ret[c].rename("ret"),
-                           net_spec[c].rename("pos")], axis=1).dropna()
-            if len(d) > lags + 10:
-                stacked.append(d)
-        if stacked:
-            data = pd.concat(stacked, axis=0).reset_index(drop=True)
-            model = VAR(data).fit(lags)
-            irf = model.irf(horizon)
-            # choc sur 'ret' -> réponses cumulées de ret et pos
-            cum = irf.cum_effects  # shape (horizon+1, neq, neq)
-            ret_idx, pos_idx = 0, 1
-            out = pd.DataFrame({
-                "cum_return": cum[:, ret_idx, ret_idx],
-                "cum_position": cum[:, pos_idx, ret_idx],
-            })
+                           pos.rename("pos")], axis=1).dropna()
+            if len(d) > lags + 12:
+                Ys.append(d.values)
+        if Ys:
+            k = 2
+            # Design du VAR(p) empilé, retards bornés à chaque instrument
+            X_list, Z_list = [], []
+            for Y in Ys:
+                T = len(Y)
+                for t in range(lags, T):
+                    row = [1.0]
+                    for L in range(1, lags + 1):
+                        row.extend(Y[t - L])
+                    X_list.append(row)
+                    Z_list.append(Y[t])
+            X = np.asarray(X_list)
+            Z = np.asarray(Z_list)
+            # MCO (coefficients communs), résidus, covariance
+            B, *_ = np.linalg.lstsq(X, Z, rcond=None)        # (1+k*p, k)
+            resid = Z - X @ B
+            Sigma = np.cov(resid.T)
+            # Matrices de coefficients A_1..A_p (réponse de Z aux retards)
+            A = [B[1 + L * k:1 + (L + 1) * k, :].T for L in range(lags)]
+            # Cholesky, choc structurel de +1σ sur 'ret' (ordonné en premier)
+            P = np.linalg.cholesky(Sigma)
+            shock = P[:, 0]
+            # Propagation MA(∞) : psi_h = Σ_L A_L · psi_{h-L}
+            psi = [np.zeros((k, k)) for _ in range(horizon + 1)]
+            psi[0] = np.eye(k)
+            for h in range(1, horizon + 1):
+                acc = np.zeros((k, k))
+                for L in range(1, lags + 1):
+                    if h - L >= 0:
+                        acc += A[L - 1] @ psi[h - L]
+                psi[h] = acc
+            irf = np.array([psi[h] @ shock for h in range(horizon + 1)])
+            cum = np.cumsum(irf, axis=0)
+            out = pd.DataFrame({"cum_return": cum[:, 0],
+                                "cum_position": cum[:, 1]})
             out.index.name = "horizon"
             return out
-        # net_spec fourni mais inexploitable (ex. CFTC = 1 ligne) -> repli univarié
+        # net_spec inexploitable -> repli univarié
 
-    # repli univarié
+    # ---- repli univarié : AR(p) sur le rendement moyen ----
+    try:
+        from statsmodels.tsa.ar_model import AutoReg
+    except Exception:
+        return None
     series = (monthly_ret[instrument].dropna() if instrument
               else monthly_ret.mean(axis=1).dropna())
     ar = AutoReg(series, lags=lags, old_names=False).fit()
-    # réponse à un choc unitaire via simulation des coefficients AR
     phi = ar.params[1:1 + lags].values
     resp = np.zeros(horizon + 1)
     resp[0] = 1.0

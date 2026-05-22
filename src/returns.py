@@ -27,6 +27,7 @@ from .config import (
     COMMODITY_FUTURES,
     CURRENCY_FORWARDS,
     USD_RATE,
+    YIELD_QUOTED_BONDS,
 )
 
 # Seuils de détection du roll (réglables). Un roll se manifeste par un écart
@@ -67,16 +68,32 @@ def _second_contract_name(front: str):
     return None
 
 
+def yield_quoted_bond_return(quote: pd.Series, target_duration: float) -> pd.Series:
+    """
+    Rendement journalier d'un future obligataire coté en « 100 − rendement »
+    (convention AUS). La cote q vérifie yield = 100 − q, donc Δyield = −Δq, et
+    le rendement obligataire ≈ −D·Δyield = D·Δq/100 (D = duration-cible).
+    Le signe est identique à celui d'un pct_change sur la cote.
+    """
+    q = quote.astype(float).where(quote > 0)
+    return target_duration * q.diff() / 100.0
+
+
 def futures_daily_excess_returns(prices: pd.DataFrame) -> pd.DataFrame:
     """
     Rendements journaliers excédentaires des futures actions / obligations /
     matières premières. Pour les commodities ayant un M2 dans `prices`, on
-    utilise le rendement roulé ; sinon, le pct_change protégé.
+    utilise le rendement roulé ; sinon, le pct_change protégé. Les obligations
+    cotées en rendement (AUS) sont converties via la duration.
     """
     out = {}
-    # Actions et obligations : pas de M2 fiable dans les données -> pct_change sûr
+    # Actions et obligations
     for c in list(EQUITY_FUTURES) + list(BOND_FUTURES):
-        if c in prices.columns:
+        if c not in prices.columns:
+            continue
+        if c in YIELD_QUOTED_BONDS:                      # AUS : cote 100 − rendement
+            out[c] = yield_quoted_bond_return(prices[c], YIELD_QUOTED_BONDS[c])
+        else:                                            # prix normal -> pct_change sûr
             out[c] = safe_pct_change(prices[c])
     # Matières premières : rendement roulé si M2 dispo, sinon pct_change sûr
     for c in COMMODITY_FUTURES:

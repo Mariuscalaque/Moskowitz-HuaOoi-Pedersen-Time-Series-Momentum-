@@ -267,7 +267,7 @@ def run(start: str = PAPER_START, end: str = PAPER_END,
     # ============================================================
     # FIGURE 7 — réponse impulsionnelle
     # ============================================================
-    irf = impulse_response(monthly, net_spec=net_spec, horizon=36, lags=2)
+    irf = impulse_response(monthly, net_spec=net_spec, horizon=36, lags=24)
     if irf is not None:
         plotting.figure7_impulse_response(irf)
         status["Figure 7"] = "OK" + ("" if net_spec is not None else " (univarié — CFTC manquant)")
