@@ -276,12 +276,20 @@ def figure7_impulse_response(irf: pd.DataFrame, save_name: str = "fig7_impulse_r
     fig, axes = plt.subplots(1, n, figsize=(7 * n, 4.5))
     axes = np.atleast_1d(axes)
     axes[0].plot(irf.index, irf["cum_return"], color="#1f3a93", lw=2)
+    if {"cum_return_lo", "cum_return_hi"}.issubset(irf.columns):
+        axes[0].fill_between(irf.index, irf["cum_return_lo"], irf["cum_return_hi"],
+                             color="#1f3a93", alpha=0.15, label="90% bootstrap")
+        axes[0].legend(loc="best", fontsize=8)
     axes[0].axhline(0, color="black", lw=0.6)
     axes[0].set_xlabel("Months after shock")
     axes[0].set_ylabel("Cumulative return response")
     axes[0].set_title("Fig. 7A — Price response to a +1σ return shock", loc="left")
     if has_pos:
         axes[1].plot(irf.index, irf["cum_position"], color="#d62728", lw=2)
+        if {"cum_position_lo", "cum_position_hi"}.issubset(irf.columns):
+            axes[1].fill_between(irf.index, irf["cum_position_lo"], irf["cum_position_hi"],
+                                 color="#d62728", alpha=0.15, label="90% bootstrap")
+            axes[1].legend(loc="best", fontsize=8)
         axes[1].axhline(0, color="black", lw=0.6)
         axes[1].set_xlabel("Months after shock")
         axes[1].set_ylabel("Cumulative position response")

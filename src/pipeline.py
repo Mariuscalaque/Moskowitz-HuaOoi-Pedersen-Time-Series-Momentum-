@@ -217,7 +217,11 @@ def run(start: str = PAPER_START, end: str = PAPER_END,
     t5a = table5_tsmom_on_xsmom(tsmom_ac.loc[m], xsmom_ac.loc[m],
                                 tsmom_all=tsmom_p,
                                 xsmom_all=xsmom_ac["ALL"].loc[m] if "ALL" in xsmom_ac else None)
-    t5b = decomposition_by_asset_class(mret, lookback=LOOKBACK_MONTHS)
+    # Décomposition Lo-MacKinlay sur rendements VOL-SCALÉS (comme tout le papier) :
+    # sans cela, bonds/FX (faible vol) contribuent ~0 et la ligne ALL s'effondre.
+    # En vol-scalé, les classes redeviennent homogènes (Equity XS_Auto ≈ 0.75% ≈ papier).
+    scaled_ret = (TARGET_VOL / mvol).replace([np.inf, -np.inf], np.nan).shift(1) * monthly
+    t5b = decomposition_by_asset_class(scaled_ret.loc[m], lookback=LOOKBACK_MONTHS)
     t5c = pd.DataFrame()
     targets = {}
     # facteurs FF + indices hedge funds externes si dispo
@@ -287,7 +291,8 @@ def run(start: str = PAPER_START, end: str = PAPER_END,
     # ============================================================
     # FIGURE 7 — réponse impulsionnelle
     # ============================================================
-    irf = impulse_response(monthly, net_spec=net_spec, horizon=36, lags=24)
+    irf = impulse_response(monthly, net_spec=net_spec, horizon=36, lags=24,
+                           n_boot=300, ci=0.90, seed=0)
     if irf is not None:
         plotting.figure7_impulse_response(irf)
         status["Figure 7"] = "OK" + ("" if net_spec is not None else " (univarié — CFTC manquant)")

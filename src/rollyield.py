@@ -61,11 +61,11 @@ def spot_roll_monthly(prices: pd.DataFrame) -> dict:
 
     # rendement total = rendement roulé (réutilise la logique corrigée de returns.py)
     daily_total = futures_daily_excess_returns(prices)[cols]
-    monthly_total = (1 + daily_total).resample("ME").prod() - 1
+    monthly_total = (1 + daily_total).resample("ME").prod(min_count=1) - 1
 
     # variation spot = niveau du prix front, non roulé
     daily_spot = _front_price_change_daily(prices, cols)
-    monthly_spot = (1 + daily_spot).resample("ME").prod() - 1
+    monthly_spot = (1 + daily_spot).resample("ME").prod(min_count=1) - 1
 
     monthly_spot = monthly_spot.reindex(columns=monthly_total.columns)
     monthly_roll = monthly_total - monthly_spot

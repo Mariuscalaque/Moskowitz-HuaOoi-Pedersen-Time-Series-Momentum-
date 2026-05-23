@@ -65,16 +65,25 @@ def xsmom_by_asset_class(monthly_ret: pd.DataFrame,
 # Décomposition Lo-MacKinlay 12→1 (Panel B), conforme à MOP Eq. (6)-(7)
 # ============================================================================
 def lo_mackinlay_decomposition(monthly_ret: pd.DataFrame,
-                               lookback: int = LOOKBACK_MONTHS) -> dict:
+                               lookback: int = LOOKBACK_MONTHS,
+                               min_obs: int = 120) -> dict:
     """
     Décomposition des profits XSMOM et TSMOM 12→1 selon Eq. (6)-(7).
 
-    `monthly_ret` : rendements mensuels (instruments en colonnes). On retient le
-    panneau d'instruments présents en continu pour une matrice Ω bien définie.
-    Renvoie les composantes XSMOM (Auto/Cross/Mean) et TSMOM (Auto/MeanSq) ainsi
-    que les profits empiriques correspondants (pour vérifier l'identité).
+    `monthly_ret` : rendements mensuels (instruments en colonnes). On retient un
+    PANNEAU ÉQUILIBRÉ : instruments ayant au moins `min_obs` observations, puis
+    fenêtre commune à ces survivants (Ω bien définie). Renvoie les composantes
+    XSMOM (Auto/Cross/Mean) et TSMOM (Auto/MeanSq) ainsi que les profits
+    empiriques correspondants (pour vérifier l'identité).
+
+    CORRECTION : maintenant que `daily_to_monthly_returns` renvoie NaN (et non 0)
+    pour les mois sans données, un `dropna(axis=1, how='any')` brut éliminerait
+    presque tous les instruments (départs échelonnés). On sélectionne donc
+    d'abord les instruments à historique suffisant (≥ min_obs), puis leur fenêtre
+    commune. Sans cela, les zéros fantômes diluaient Ω (~10× trop petit).
     """
-    R = monthly_ret.dropna(axis=1, how="any").dropna(axis=0, how="any")
+    keep = monthly_ret.columns[monthly_ret.notna().sum() >= min_obs]
+    R = monthly_ret[keep].dropna(axis=0, how="any")
     N = R.shape[1]
     if N < 2 or len(R) < lookback + 24:
         nan = float("nan")

@@ -424,13 +424,24 @@ def table3_extremes_blocks(diversified_tsmom_ret: pd.Series,
 
 # ---- Table 4 : corrélations intra- et inter-classes -------------------------
 
-def avg_pairwise_corr(df: pd.DataFrame) -> float:
-    """Corrélation moyenne par paires (hors diagonale) des colonnes."""
-    c = df.corr()
-    n = c.shape[0]
-    if n < 2:
+def avg_pairwise_corr(df: pd.DataFrame, min_periods: int = 24) -> float:
+    """Corrélation moyenne par paires (hors diagonale) des colonnes.
+
+    CORRECTION : on calcule la corrélation PAR PAIRE sur l'intersection propre à
+    chaque paire (`DataFrame.corr(min_periods=...)` gère le pairwise-complete),
+    puis on moyenne le triangle supérieur. Auparavant l'appelant passait un
+    `df.dropna()` (lignes complètes), ce qui restreignait l'échantillon à la
+    fenêtre où TOUS les instruments existent — pour les actions, cela tombait sur
+    2004-2009 (66 mois, en pleine crise) et gonflait la corrélation à 0.67 contre
+    0.37 dans le papier. En pairwise on retrouve ~0.05/0.51/0.25/0.16
+    (Commodity/Equity/Bond/Currency), bien plus proches du papier.
+    """
+    if df.shape[1] < 2:
         return np.nan
-    return (c.values.sum() - n) / (n * (n - 1))
+    c = df.corr(min_periods=min_periods).values
+    iu = np.triu_indices(c.shape[0], k=1)
+    vals = c[iu]
+    return float(np.nanmean(vals)) if np.isfinite(vals).any() else np.nan
 
 
 def table4_within_class(inst_tsmom: pd.DataFrame,
@@ -442,9 +453,11 @@ def table4_within_class(inst_tsmom: pd.DataFrame,
     for ac in ("Commodity", "Equity", "Bond", "Currency"):
         cols = [c for c, a in classes.items() if a == ac]
         if len(cols) >= 2:
+            # NE PAS faire .dropna() ici : on laisse avg_pairwise_corr calculer
+            # la corrélation par paire sur l'intersection propre à chaque paire.
             rows[ac] = {
-                "TSMOM strategies": avg_pairwise_corr(inst_tsmom[cols].dropna()),
-                "Passive long": avg_pairwise_corr(inst_passive[cols].dropna()),
+                "TSMOM strategies": avg_pairwise_corr(inst_tsmom[cols]),
+                "Passive long": avg_pairwise_corr(inst_passive[cols]),
             }
     return pd.DataFrame(rows).T
 
@@ -452,10 +465,12 @@ def table4_within_class(inst_tsmom: pd.DataFrame,
 def table4_across_class(tsmom_by_ac: pd.DataFrame,
                         passive_by_ac: pd.DataFrame) -> dict:
     """Panel B : matrices de corrélation inter-classes (stratégies équipondérées
-    par classe), pour TSMOM et pour passive long."""
+    par classe), pour TSMOM et pour passive long. Corrélation pairwise (chaque
+    paire de classes sur son intersection) plutôt que sur la fenêtre commune aux
+    quatre classes, pour ne pas tronquer inutilement l'échantillon."""
     return {
-        "TSMOM": tsmom_by_ac.dropna().corr(),
-        "Passive long": passive_by_ac.dropna().corr(),
+        "TSMOM": tsmom_by_ac.corr(min_periods=24),
+        "Passive long": passive_by_ac.corr(min_periods=24),
     }
 
 
@@ -599,21 +614,31 @@ def table6_predictors(total_ret: pd.DataFrame,
 def event_study_returns(monthly_ret: pd.DataFrame,
                         k: int = 12,
                         window_before: int = 12,
-                        window_after: int = 36) -> pd.DataFrame:
+                        window_after: int = 36,
+                        demean: bool = True) -> pd.DataFrame:
     """
     Pour chaque (instrument, t), on regarde le signe du rendement passé sur k
     mois, puis on suit le rendement CUMULÉ moyen de -window_before à +window_after
     mois autour de l'événement, conditionnellement au signe (positif/négatif).
     Renvoie un DataFrame indexé par le décalage d'événement, colonnes
     'positive' / 'negative' (rendement cumulé moyen, base 0 au temps 0).
+
+    CORRECTION : `demean=True` retire de chaque instrument sa moyenne plein
+    échantillon AVANT de cumuler, comme le papier (« we standardize the returns
+    to have a zero mean across time and across the two groups »). Sans ce
+    retrait, la dérive haussière inconditionnelle des futures domine et masque
+    la structure continuation-puis-réversion : les deux courbes montent et la
+    branche « négative » ne descend jamais. Avec, on retrouve le motif du papier
+    (poursuite ~12 mois puis réversion partielle, symétrique pour les deux signes).
     """
-    past = past_k_month_returns(monthly_ret, k=k)
+    R = monthly_ret.sub(monthly_ret.mean()) if demean else monthly_ret
+    past = past_k_month_returns(monthly_ret, k=k)   # signe sur rendements BRUTS
     sign = np.sign(past)
     pos_paths, neg_paths = [], []
-    ncols = monthly_ret.shape[1]
-    arr = monthly_ret.values
+    ncols = R.shape[1]
+    arr = R.values
     sgn = sign.values
-    T = len(monthly_ret)
+    T = len(R)
     offsets = range(-window_before, window_after + 1)
 
     for j in range(ncols):
@@ -670,35 +695,93 @@ def event_study_positions(net_spec: pd.DataFrame,
 
 # ---- Figure 7 : réponse impulsionnelle (VAR returns × positions) ------------
 
+def _bivariate_irf_from_Ys(Ys: list, lags: int, horizon: int) -> np.ndarray | None:
+    """Estime le VAR(p) bivarié à coefficients communs sur la liste de séries
+    `Ys` (chacune un array T×2 [ret, pos]), et renvoie l'IRF cumulée à un choc
+    de +1σ sur le rendement (Cholesky, rendement ordonné en premier).
+    Renvoie un array (horizon+1)×2 [cum_return, cum_position] ou None."""
+    k = 2
+    X_list, Z_list = [], []
+    for Y in Ys:
+        T = len(Y)
+        for t in range(lags, T):
+            row = [1.0]
+            for L in range(1, lags + 1):
+                row.extend(Y[t - L])
+            X_list.append(row)
+            Z_list.append(Y[t])
+    if len(X_list) < (1 + k * lags) + 5:
+        return None
+    X = np.asarray(X_list); Z = np.asarray(Z_list)
+    B, *_ = np.linalg.lstsq(X, Z, rcond=None)
+    resid = Z - X @ B
+    Sigma = np.cov(resid.T)
+    A = [B[1 + L * k:1 + (L + 1) * k, :].T for L in range(lags)]
+    try:
+        P = np.linalg.cholesky(Sigma)
+    except np.linalg.LinAlgError:
+        return None
+    shock = P[:, 0]
+    psi = [np.zeros((k, k)) for _ in range(horizon + 1)]
+    psi[0] = np.eye(k)
+    for h in range(1, horizon + 1):
+        acc = np.zeros((k, k))
+        for L in range(1, lags + 1):
+            if h - L >= 0:
+                acc += A[L - 1] @ psi[h - L]
+        psi[h] = acc
+    irf = np.array([psi[h] @ shock for h in range(horizon + 1)])
+    return np.cumsum(irf, axis=0)
+
+
+def _univariate_irf(series: pd.Series, lags: int, horizon: int) -> np.ndarray | None:
+    """IRF cumulée d'un AR(p) sur une série unique (repli sans positions)."""
+    try:
+        from statsmodels.tsa.ar_model import AutoReg
+    except Exception:
+        return None
+    s = series.dropna()
+    if len(s) < lags + 12:
+        return None
+    phi = AutoReg(s, lags=lags, old_names=False).fit().params[1:1 + lags].values
+    resp = np.zeros(horizon + 1); resp[0] = 1.0
+    for h in range(1, horizon + 1):
+        resp[h] = sum(phi[i] * resp[h - 1 - i] for i in range(lags) if h - 1 - i >= 0)
+    return np.cumsum(resp)
+
+
 def impulse_response(monthly_ret: pd.DataFrame,
                      net_spec: pd.DataFrame | None = None,
                      instrument: str | None = None,
                      horizon: int = 36,
                      lags: int = 24,
-                     diff_positions: bool = True) -> pd.DataFrame | None:
+                     diff_positions: bool = True,
+                     n_boot: int = 0,
+                     ci: float = 0.90,
+                     seed: int = 0) -> pd.DataFrame | None:
     """
     Réponse impulsionnelle cumulée à un choc de +1 écart-type sur le rendement.
 
     Conforme à MOP (2012, §6.2) : VAR mensuel bivarié [rendement, *variation* de
-    la position nette des spéculateurs] avec 24 retards (le papier insiste sur la
-    nécessité de >12 retards pour capter la réversion retardée), décomposition de
-    Cholesky avec le rendement ordonné en premier.
+    la position nette des spéculateurs] avec 24 retards, décomposition de Cholesky
+    rendement ordonné en premier. Estimation en PANEL À COEFFICIENTS COMMUNS :
+    retards bornés À L'INTÉRIEUR de chaque instrument, puis empilés (MCO).
 
-    Estimation en PANEL À COEFFICIENTS COMMUNS : les retards sont construits
-    À L'INTÉRIEUR de chaque instrument (jamais à cheval sur deux contrats), puis
-    empilés et estimés par MCO équation par équation. C'est exactement
-    l'hypothèse du papier (« coefficients are the same across all contracts »),
-    et cela évite la contamination des frontières inter-instruments d'un simple
-    `concat().reset_index()`.
+    Bandes de confiance (n_boot > 0) : CLUSTER BOOTSTRAP par instrument — on
+    ré-échantillonne AVEC REMISE l'ensemble des instruments (l'unité de
+    dépendance est l'instrument ; les retards restent bornés à chaque série),
+    on ré-estime le VAR et on recalcule l'IRF. On renvoie les quantiles
+    (1-ci)/2 et (1+ci)/2. Pour le repli univarié, bootstrap par blocs mobiles
+    de la série moyenne. Colonnes *_lo / *_hi ajoutées si n_boot > 0.
 
-    - Si `net_spec` est fourni : VAR bivarié -> cum_return + cum_position.
-    - Sinon : AR(p) univarié sur les rendements -> cum_return seul.
-    Renvoie un DataFrame indexé par l'horizon (réponses cumulées).
+    - net_spec fourni  -> VAR bivarié : cum_return + cum_position (+ bandes).
+    - sinon            -> AR(p) univarié : cum_return (+ bandes).
     """
+    rng = np.random.default_rng(seed)
+
     if net_spec is not None:
         cols = ([instrument] if instrument else
                 [c for c in net_spec.columns if c in monthly_ret.columns])
-        # Séries bivariées par instrument (positions différenciées comme le papier)
         Ys = []
         for c in cols:
             pos = net_spec[c].diff() if diff_positions else net_spec[c]
@@ -707,58 +790,52 @@ def impulse_response(monthly_ret: pd.DataFrame,
             if len(d) > lags + 12:
                 Ys.append(d.values)
         if Ys:
-            k = 2
-            # Design du VAR(p) empilé, retards bornés à chaque instrument
-            X_list, Z_list = [], []
-            for Y in Ys:
-                T = len(Y)
-                for t in range(lags, T):
-                    row = [1.0]
-                    for L in range(1, lags + 1):
-                        row.extend(Y[t - L])
-                    X_list.append(row)
-                    Z_list.append(Y[t])
-            X = np.asarray(X_list)
-            Z = np.asarray(Z_list)
-            # MCO (coefficients communs), résidus, covariance
-            B, *_ = np.linalg.lstsq(X, Z, rcond=None)        # (1+k*p, k)
-            resid = Z - X @ B
-            Sigma = np.cov(resid.T)
-            # Matrices de coefficients A_1..A_p (réponse de Z aux retards)
-            A = [B[1 + L * k:1 + (L + 1) * k, :].T for L in range(lags)]
-            # Cholesky, choc structurel de +1σ sur 'ret' (ordonné en premier)
-            P = np.linalg.cholesky(Sigma)
-            shock = P[:, 0]
-            # Propagation MA(∞) : psi_h = Σ_L A_L · psi_{h-L}
-            psi = [np.zeros((k, k)) for _ in range(horizon + 1)]
-            psi[0] = np.eye(k)
-            for h in range(1, horizon + 1):
-                acc = np.zeros((k, k))
-                for L in range(1, lags + 1):
-                    if h - L >= 0:
-                        acc += A[L - 1] @ psi[h - L]
-                psi[h] = acc
-            irf = np.array([psi[h] @ shock for h in range(horizon + 1)])
-            cum = np.cumsum(irf, axis=0)
-            out = pd.DataFrame({"cum_return": cum[:, 0],
-                                "cum_position": cum[:, 1]})
-            out.index.name = "horizon"
-            return out
+            cum = _bivariate_irf_from_Ys(Ys, lags, horizon)
+            if cum is not None:
+                out = pd.DataFrame({"cum_return": cum[:, 0],
+                                    "cum_position": cum[:, 1]})
+                out.index.name = "horizon"
+                if n_boot and len(Ys) >= 3:
+                    boots_r, boots_p = [], []
+                    nI = len(Ys)
+                    for _ in range(n_boot):
+                        idx = rng.integers(0, nI, nI)            # instruments avec remise
+                        bc = _bivariate_irf_from_Ys([Ys[i] for i in idx], lags, horizon)
+                        if bc is not None:
+                            boots_r.append(bc[:, 0]); boots_p.append(bc[:, 1])
+                    if len(boots_r) >= max(20, n_boot // 5):
+                        lo, hi = (1 - ci) / 2 * 100, (1 + ci) / 2 * 100
+                        R = np.array(boots_r); Pp = np.array(boots_p)
+                        out["cum_return_lo"] = np.percentile(R, lo, axis=0)
+                        out["cum_return_hi"] = np.percentile(R, hi, axis=0)
+                        out["cum_position_lo"] = np.percentile(Pp, lo, axis=0)
+                        out["cum_position_hi"] = np.percentile(Pp, hi, axis=0)
+                return out
         # net_spec inexploitable -> repli univarié
 
     # ---- repli univarié : AR(p) sur le rendement moyen ----
-    try:
-        from statsmodels.tsa.ar_model import AutoReg
-    except Exception:
-        return None
     series = (monthly_ret[instrument].dropna() if instrument
               else monthly_ret.mean(axis=1).dropna())
-    ar = AutoReg(series, lags=lags, old_names=False).fit()
-    phi = ar.params[1:1 + lags].values
-    resp = np.zeros(horizon + 1)
-    resp[0] = 1.0
-    for h in range(1, horizon + 1):
-        resp[h] = sum(phi[i] * resp[h - 1 - i] for i in range(lags) if h - 1 - i >= 0)
-    out = pd.DataFrame({"cum_return": np.cumsum(resp)})
-    out.index.name = "horizon"
+    base = _univariate_irf(series, lags, horizon)
+    if base is None:
+        return None
+    out = pd.DataFrame({"cum_return": base}); out.index.name = "horizon"
+    if n_boot:
+        # bootstrap par BLOCS MOBILES (préserve l'autocorrélation de la série)
+        s = series.values; T = len(s); blk = max(lags, 12)
+        boots = []
+        for _ in range(n_boot):
+            chunks, acc = [], 0
+            while acc < T:
+                start = rng.integers(0, T - blk + 1)
+                chunks.append(s[start:start + blk]); acc += blk
+            bs = pd.Series(np.concatenate(chunks)[:T])
+            bi = _univariate_irf(bs, lags, horizon)
+            if bi is not None:
+                boots.append(bi)
+        if len(boots) >= max(20, n_boot // 5):
+            lo, hi = (1 - ci) / 2 * 100, (1 + ci) / 2 * 100
+            Bm = np.array(boots)
+            out["cum_return_lo"] = np.percentile(Bm, lo, axis=0)
+            out["cum_return_hi"] = np.percentile(Bm, hi, axis=0)
     return out

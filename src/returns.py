@@ -174,5 +174,13 @@ def build_daily_excess_returns(prices: pd.DataFrame,
 
 
 def daily_to_monthly_returns(daily_ret: pd.DataFrame) -> pd.DataFrame:
-    """Compose les rendements journaliers en mensuels (horodatés fin de mois)."""
-    return (1.0 + daily_ret).resample("ME").prod() - 1.0
+    """Compose les rendements journaliers en mensuels (horodatés fin de mois).
+
+    IMPORTANT : `min_count=1`. Sans ce garde-fou, `prod()` (min_count=0) renvoie
+    1.0 pour un mois SANS aucune donnée (produit vide) -> rendement 0 % fantôme.
+    Les instruments qui n'existent pas encore (ex. FTSE/MIB avant 2004) se
+    retrouvaient alors avec des centaines de 0 % au lieu de NaN, ce qui diluait
+    la matrice de comoments Ω (décomposition Lo-MacKinlay, Table 5B) et polluait
+    le classement XSMOM. Avec min_count=1, un mois sans observation reste NaN.
+    """
+    return (1.0 + daily_ret).resample("ME").prod(min_count=1) - 1.0
