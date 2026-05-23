@@ -40,7 +40,8 @@ def ewma_ex_ante_vol(daily_returns: pd.DataFrame,
     """
     # ewm.var with com=N gives an EWMA second moment of returns about their
     # exponential mean — exactly the (1-δ) Σ δ^i (r_{t-i} - r̄_t)^2 in the paper.
-    ewm_var = daily_returns.ewm(com=com, min_periods=min_periods, adjust=True).var()
+    # bias=True -> estimateur (1-δ)Σδ^i (r-r̄)^2 EXACT de l'Eq.(1) (non débiaisé).
+    ewm_var = daily_returns.ewm(com=com, min_periods=min_periods, adjust=True).var(bias=True)
     annual_var = annualization * ewm_var
     return np.sqrt(annual_var)
 

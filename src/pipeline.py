@@ -90,7 +90,18 @@ def run(start: str = PAPER_START, end: str = PAPER_END,
     bond = _mret(prices, "LBUSTRUU Index")
     rf = (prices["US0001M Index"] / 100 / 12).resample("ME").last()
     mkt_excess = (mkt - rf)
-    factors_t2 = pd.DataFrame({"MKT": mkt_excess, "GSCI": gsci, "BOND": bond}).loc[m]
+
+    # Table 2 : modèle COMPLET de l'Eq. (4) — MKT, BOND, GSCI, SMB, HML, UMD.
+    # (Auparavant seuls MKT/GSCI/BOND étaient inclus, ce qui n'est pas l'Eq. 4.)
+    # Repli automatique sur 3 facteurs si les facteurs Fama-French sont indisponibles.
+    factors_t2 = pd.DataFrame({"MKT": mkt_excess, "BOND": bond - rf,
+                               "GSCI": gsci - rf}).loc[m]
+    try:
+        _ff_t2 = fetch_ff_factors(start=start, end=end, source="auto")
+        factors_t2 = factors_t2.join(_ff_t2[["SMB", "HML", "UMD"]], how="left")
+        factors_t2 = factors_t2.dropna()
+    except Exception as _e:
+        log(f"[Table 2] FF indisponibles, repli 3 facteurs : {str(_e)[:50]}")
 
     tsmom_p = tsmom.loc[m]
 
@@ -158,19 +169,28 @@ def run(start: str = PAPER_START, end: str = PAPER_END,
     else:
         status["Table 3B"] = "SKIP (VME externe manquant)"; log("[SKIP] Table 3 Panel B — VME absent")
 
-    # Panel C — extrêmes (VIX/TED in-dataset + PS/BW externes)
+    # Panel C — extrêmes : régressions SÉPARÉES, en TRIMESTRIEL (fidélité au papier)
     try:
+        from .analysis import table3_smile_quarterly, table3_extremes_blocks
+        # (1) Straddle / smile : TSMOM ~ MKT + MKT² en trimestriel (résultat phare)
+        t3c_smile = table3_smile_quarterly(tsmom_p, mkt_excess.loc[m])
+        tables.table3_panel_save(t3c_smile, "table3_panelC_smile")
+
+        # (2) Blocs extrêmes, chacun dans sa propre régression trimestrielle.
+        #     Le papier utilise le NIVEAU du VIX (pas ΔVIX).
         vix = prices["VIX Index"].resample("ME").last()
         ted = prices[".TEDSP Index"].resample("ME").last()
         ps = ext.get("pastor_stambaugh")
         bw = ext.get("baker_wurgler")
         ps_s = ps["innov_liq"] if (ps is not None and "innov_liq" in ps) else None
-        bw_s = (bw.iloc[:, 0] if bw is not None and bw.shape[1] else None)
-        Xc = build_extremes_factor_matrix(mkt_excess.loc[m], vix.loc[m], ted.loc[m], ps_s, bw_s)
-        t3c = table3_full(tsmom_p, Xc.loc[Xc.index.isin(tsmom_p.index)])
-        tables.table3_panel_save(t3c, "table3_panelC_extremes")
-        note = "" if (ps_s is not None and bw_s is not None) else " (VIX/TED only — PS/BW manquants)"
-        status["Table 3C"] = "OK" + note; log(f"[OK]   Table 3 Panel C — extremes{note}")
+        sent_lvl = (bw.iloc[:, 0] if bw is not None and bw.shape[1] else None)
+        sent_chg = sent_lvl.diff() if sent_lvl is not None else None
+        t3c = table3_extremes_blocks(tsmom_p, vix_level=vix.loc[m], ted=ted.loc[m],
+                                     liq=ps_s, sent_level=sent_lvl, sent_change=sent_chg)
+        if len(t3c):
+            tables.table3_panel_save(t3c, "table3_panelC_extremes")
+        note = "" if (ps_s is not None and sent_lvl is not None) else " (VIX/TED only — PS/BW manquants)"
+        status["Table 3C"] = "OK" + note; log(f"[OK]   Table 3 Panel C — smile + extrêmes séparés{note}")
     except Exception as e:
         status["Table 3C"] = f"SKIP ({str(e)[:50]})"; log(f"[SKIP] Table 3 Panel C : {str(e)[:60]}")
 
@@ -274,6 +294,41 @@ def run(start: str = PAPER_START, end: str = PAPER_END,
         log("[OK]   Figure 7 — impulse response" + ("" if net_spec is not None else " (univariate)"))
     else:
         status["Figure 7"] = "SKIP (statsmodels VAR indisponible)"; log("[SKIP] Figure 7")
+
+    # ============================================================
+    # RÉSUMÉ DE PERFORMANCE + SÉRIE TSMOM  (source UNIQUE de vérité)
+    # Auparavant générés à part par le notebook -> risque d'outputs périmés.
+    # On les produit ici pour qu'ils soient TOUJOURS cohérents avec les tables.
+    # ============================================================
+    def _perf(series, ppy=12):
+        r = series.dropna()
+        if len(r) == 0:
+            return {k: np.nan for k in ("N months", "Ann. mean", "Ann. vol",
+                    "Sharpe", "Skew", "Excess kurt", "Max DD", "CAGR")}
+        mean_a, vol_a = r.mean() * ppy, r.std() * np.sqrt(ppy)
+        cum = (1 + r).cumprod()
+        dd = (cum / cum.cummax() - 1).min()
+        cagr = cum.iloc[-1] ** (ppy / len(r)) - 1
+        return {"N months": len(r), "Ann. mean": mean_a, "Ann. vol": vol_a,
+                "Sharpe": mean_a / vol_a if vol_a > 0 else np.nan,
+                "Skew": r.skew(), "Excess kurt": r.kurtosis(),
+                "Max DD": dd, "CAGR": cagr}
+
+    perf_rows = {
+        "TSMOM diversifié (1985-2009)": _perf(tsmom_p),
+        "Passive long (1985-2009)": _perf(passive.loc[m]),
+        "MSCI World (1985-2009)": _perf(mkt_excess.loc[m]),
+    }
+    for ac in ("Commodity", "Equity", "Bond", "Currency"):
+        if ac in tsmom_ac.columns:
+            perf_rows[f"TSMOM {ac} (1985-2009)"] = _perf(tsmom_ac[ac].loc[m])
+    perf_df = pd.DataFrame(perf_rows).T
+    perf_df.index.name = "Series"
+    perf_df.to_csv(TABLES_DIR / "performance_summary.csv", float_format="%.4f")
+    (tsmom_p.rename("TSMOM").to_frame()
+        .to_csv(TABLES_DIR / "diversified_tsmom_series.csv", index_label="date"))
+    status["Perf summary"] = "OK"
+    log("[OK]   performance_summary + diversified_tsmom_series (cohérents)")
 
     # ---------- Récapitulatif ----------
     if verbose:

@@ -31,15 +31,11 @@ def table1_summary_stats(monthly_ret: pd.DataFrame,
     Order: Commodities, Equity, Bonds, Currencies.
     """
     rows = []
-    instruments = (
-        [(t, "Equity")    for t in EQUITY_FUTURES]
-      + [(t, "Bond")      for t in BOND_FUTURES]
-      + [(t, "Commodity") for t in COMMODITY_FUTURES]
-      + [(t, "Currency")  for t in CURRENCY_FORWARDS]
-    )
+    # Pilote par les colonnes RÉELLEMENT présentes (compatible vs-USD ET paires
+    # croisées) : on classe chaque instrument via asset_class_of.
+    instruments = [(t, asset_class_of(t)) for t in monthly_ret.columns
+                   if asset_class_of(t) in ("Equity", "Bond", "Commodity", "Currency")]
     for t, ac in instruments:
-        if t not in monthly_ret.columns:
-            continue
         s = monthly_ret[t].dropna()
         if len(s) == 0:
             continue

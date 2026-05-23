@@ -43,6 +43,24 @@ LOOKBACK_MONTHS = 12      # k=12: 12-month past return defines the sign
 HOLDING_MONTHS = 1        # h=1: 1-month holding period
 TARGET_VOL = 0.40         # 40% target annual vol per position (paper §4.1)
 
+# ---------- Devises : paires croisées vs vs-USD ----------
+# Le papier utilise des « cross-currency pairs (from nine underlying currencies) ».
+# Coter les 9 devises toutes contre l'USD injecte un facteur USD commun qui gonfle
+# les corrélations FX (intra-classe 0.37/0.54 vs 0.10/0.04 dans le papier) et
+# abaisse la corrélation avec le facteur AQR FX (0.56). Construire les C(9,2)=36
+# paires croisées (la jambe USD s'annule) remonte la corr AQR FX à ~0.67 et
+# rapproche les corrélations intra-classe de celles du papier.
+#   True  -> 36 paires croisées (DÉFAUT, plus fidèle au papier ; corr AQR FX
+#            0.55->0.67, Table 4 passive FX 0.54->0.05 ≈ 0.04 du papier)
+#   False -> 10 paires vs-USD (ancien comportement ; corr AQR ALL 0.80 et
+#            Sharpe 1.13 légèrement supérieurs car pas de sur-pondération FX)
+# Compromis : en croisé, les 36 paires sur-pondèrent un peu la classe devises dans
+# le facteur équipondéré par instrument (corr AQR ALL 0.80->0.76, Sharpe 1.13->1.03).
+# NB : les positions CFTC ne couvrent que les devises vs-USD ; en mode croisé, la
+# sleeve FX ne contribue pas aux analyses de positions (Fig 5/6B/7), ce qui est
+# géré proprement (les autres classes restent couvertes).
+FX_CROSS_PAIRS = True
+
 # EWMA volatility: center of mass = 60 days ⇒ delta = 60/61
 EWMA_COM_DAYS = 60
 EWMA_DELTA = EWMA_COM_DAYS / (EWMA_COM_DAYS + 1)
@@ -168,6 +186,8 @@ def asset_class_of(ticker: str) -> str:
         return "Commodity"
     if ticker in CURRENCY_FORWARDS:
         return "Currency"
+    if ticker.endswith("Cross"):          # paire croisée FX, ex. "AUD/GBP Cross"
+        return "Currency"
     return "Other"
 
 
@@ -177,6 +197,8 @@ def pretty_name(ticker: str) -> str:
             return d[ticker]
     if ticker in CURRENCY_FORWARDS:
         return CURRENCY_FORWARDS[ticker]["name"]
+    if ticker.endswith("Cross"):          # "AUD/GBP Cross" -> "AUD/GBP"
+        return ticker.replace(" Cross", "")
     return ticker
 
 

@@ -20,6 +20,7 @@ le rendement excédentaire du forward FX : variation du spot + carry (i_FCY-i_US
 
 import pandas as pd
 import numpy as np
+from itertools import combinations
 
 from .config import (
     EQUITY_FUTURES,
@@ -28,6 +29,7 @@ from .config import (
     CURRENCY_FORWARDS,
     USD_RATE,
     YIELD_QUOTED_BONDS,
+    FX_CROSS_PAIRS,
 )
 
 # Seuils de détection du roll (réglables). Un roll se manifeste par un écart
@@ -130,10 +132,44 @@ def fx_daily_excess_returns(prices: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(out)
 
 
-def build_daily_excess_returns(prices: pd.DataFrame) -> pd.DataFrame:
-    """Concatène futures (roulés) et forwards FX en rendements journaliers."""
+def _ccy_code(spot_ticker: str) -> str:
+    """'AUDUSD Curncy' -> 'AUD' ; 'USDCAD Curncy' -> 'CAD' (on retire 'USD')."""
+    pair = spot_ticker.split()[0]      # 'AUDUSD' / 'USDCAD'
+    return pair.replace("USD", "")      # 'AUD' / 'CAD'
+
+
+def build_fx_cross_pairs(fx_vs_usd: pd.DataFrame) -> pd.DataFrame:
+    """
+    Rendements excédentaires journaliers des PAIRES CROISÉES, à partir des
+    rendements vs-USD déjà calculés (chacun = long-devise-vs-USD en excès).
+
+    Pour deux devises i, j (toutes deux exprimées vs USD), le rendement de la
+    paire croisée « long i / short j » vaut r_i − r_j : la jambe USD (spot ET
+    carry) s'annule. Cela élimine le facteur USD commun qui gonfle les
+    corrélations FX. On splice d'abord le Deutsche Mark dans l'Euro, puis on
+    forme les C(9,2)=36 paires.
+    """
+    fx = fx_vs_usd.copy()
+    if "DEMUSD Curncy" in fx.columns and "EURUSD Curncy" in fx.columns:
+        fx["EURUSD Curncy"] = fx["EURUSD Curncy"].fillna(fx["DEMUSD Curncy"])
+        fx = fx.drop(columns=["DEMUSD Curncy"])
+    cols = list(fx.columns)
+    out = {}
+    for a, b in combinations(cols, 2):
+        name = f"{_ccy_code(a)}/{_ccy_code(b)} Cross"
+        out[name] = fx[a] - fx[b]
+    return pd.DataFrame(out)
+
+
+def build_daily_excess_returns(prices: pd.DataFrame,
+                               fx_cross: bool = FX_CROSS_PAIRS) -> pd.DataFrame:
+    """Concatène futures (roulés) et devises en rendements journaliers excédentaires.
+
+    `fx_cross=True` (défaut) construit les 36 paires croisées ; `False` garde les
+    10 paires vs-USD (ancien comportement)."""
     fut = futures_daily_excess_returns(prices)
-    fx = fx_daily_excess_returns(prices)
+    fx_vs_usd = fx_daily_excess_returns(prices)
+    fx = build_fx_cross_pairs(fx_vs_usd) if fx_cross else fx_vs_usd
     return pd.concat([fut, fx], axis=1)
 
 

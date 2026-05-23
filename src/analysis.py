@@ -343,6 +343,85 @@ def build_extremes_factor_matrix(mkt_excess: pd.Series,
     return X.dropna()
 
 
+# ---- Table 3 Panel C : régressions SÉPARÉES, en TRIMESTRIEL (fidélité au papier) ----
+
+def table3_smile_quarterly(diversified_tsmom_ret: pd.Series,
+                           mkt_excess: pd.Series,
+                           hac_lags: int = 1) -> pd.DataFrame:
+    """
+    Régression « straddle / smile » du papier (Table 3 Panel C, 1re ligne) :
+        TSMOM_q ~ MKT + MKT²   sur rendements TRIMESTRIELS non chevauchants.
+    C'est la spécification EXACTE du papier (coeff. MKT² = 1.99, t = 3.88).
+    Régression DÉDIÉE et séparée — le papier ne mélange pas les blocs extrêmes.
+    """
+    yq = _to_quarterly(diversified_tsmom_ret)
+    mq = _to_quarterly(mkt_excess)
+    df = pd.concat([yq.rename("y"), mq.rename("MKT")], axis=1).dropna()
+    df["MKT_sq"] = df["MKT"] ** 2
+    m = sm.OLS(df["y"], sm.add_constant(df[["MKT", "MKT_sq"]])).fit(
+        cov_type="HAC", cov_kwds={"maxlags": hac_lags})
+    return pd.DataFrame({"Quarterly": {
+        "Alpha (%)": m.params["const"] * 100.0, "t(Alpha)": m.tvalues["const"],
+        "MKT": m.params["MKT"], "t(MKT)": m.tvalues["MKT"],
+        "MKT_sq": m.params["MKT_sq"], "t(MKT_sq)": m.tvalues["MKT_sq"],
+        "R2": m.rsquared, "N": int(m.nobs),
+    }}).T[["Alpha (%)", "t(Alpha)", "MKT", "t(MKT)", "MKT_sq", "t(MKT_sq)", "R2", "N"]]
+
+
+def table3_extremes_blocks(diversified_tsmom_ret: pd.Series,
+                           vix_level: pd.Series | None = None,
+                           ted: pd.Series | None = None,
+                           liq: pd.Series | None = None,
+                           sent_level: pd.Series | None = None,
+                           sent_change: pd.Series | None = None,
+                           hac_lags: int = 1) -> pd.DataFrame:
+    """
+    Table 3 Panel C — liquidité / volatilité / sentiment, chacun dans une
+    régression SÉPARÉE en trimestriel (comme le papier), pas un seul modèle
+    fourre-tout. Chaque bloc : TSMOM_q ~ X (standardisé) + X·1{top 20%}
+    (+ X·1{bottom 20%} pour le sentiment). Le papier utilise le NIVEAU du VIX
+    (et non ΔVIX). Tous ces effets sont attendus NON significatifs : c'est le
+    message du papier (TSMOM n'est pas expliqué par la liquidité/le sentiment).
+    """
+    yq = _to_quarterly(diversified_tsmom_ret)
+    rows = {}
+
+    def _block(name, raw, add_bottom=False):
+        if raw is None:
+            return
+        xq = raw.resample("QE").mean()  # niveau/innovation trimestriel moyen
+        df = pd.concat([yq.rename("y"), xq.rename("X")], axis=1).dropna()
+        if len(df) < 12 or df["X"].std() == 0:
+            return
+        z = (df["X"] - df["X"].mean()) / df["X"].std()
+        top = (df["X"] >= df["X"].quantile(0.8)).astype(float)
+        cols = {"X": z, "X_top20": z * top}
+        if add_bottom:
+            cols["X_bot20"] = z * (df["X"] <= df["X"].quantile(0.2)).astype(float)
+        XX = pd.DataFrame(cols, index=df.index)
+        m = sm.OLS(df["y"], sm.add_constant(XX)).fit(
+            cov_type="HAC", cov_kwds={"maxlags": hac_lags})
+        r = {"Alpha (%)": m.params["const"] * 100.0, "t(Alpha)": m.tvalues["const"],
+             "beta(X)": m.params["X"], "t(X)": m.tvalues["X"],
+             "beta(top20%)": m.params["X_top20"], "t(top20%)": m.tvalues["X_top20"],
+             "beta(bot20%)": (m.params["X_bot20"] if add_bottom else np.nan),
+             "t(bot20%)": (m.tvalues["X_bot20"] if add_bottom else np.nan),
+             "R2": m.rsquared, "N": int(m.nobs)}
+        rows[name] = r
+
+    _block("VIX (level)", vix_level)
+    _block("TED spread", ted)
+    _block("Liquidity (PS)", liq)
+    _block("Sentiment (BW)", sent_level, add_bottom=True)
+    _block("Δ Sentiment", sent_change, add_bottom=True)
+
+    if not rows:
+        return pd.DataFrame()
+    cols = ["Alpha (%)", "t(Alpha)", "beta(X)", "t(X)", "beta(top20%)",
+            "t(top20%)", "beta(bot20%)", "t(bot20%)", "R2", "N"]
+    return pd.DataFrame(rows).T[cols]
+
+
 # ---- Table 4 : corrélations intra- et inter-classes -------------------------
 
 def avg_pairwise_corr(df: pd.DataFrame) -> float:
