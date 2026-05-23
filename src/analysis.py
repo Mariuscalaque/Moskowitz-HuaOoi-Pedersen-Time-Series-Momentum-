@@ -413,7 +413,7 @@ def table3_extremes_blocks(diversified_tsmom_ret: pd.Series,
     _block("TED spread", ted)
     _block("Liquidity (PS)", liq)
     _block("Sentiment (BW)", sent_level, add_bottom=True)
-    _block("Δ Sentiment", sent_change, add_bottom=True)
+    _block("Chg Sentiment", sent_change, add_bottom=True)
 
     if not rows:
         return pd.DataFrame()

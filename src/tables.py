@@ -14,9 +14,11 @@ from .analysis import annualized_sharpe
 
 
 def _save(df: pd.DataFrame, name: str, float_fmt: str = "%.3f"):
-    df.to_csv(TABLES_DIR / f"{name}.csv", float_format=float_fmt)
+    # encoding="utf-8" explicite : sous Windows write_text() utilise sinon
+    # l'encodage local (cp1252) qui ne sait pas encoder certains caractères.
+    df.to_csv(TABLES_DIR / f"{name}.csv", float_format=float_fmt, encoding="utf-8")
     md = df.to_markdown(floatfmt=".3f")
-    (TABLES_DIR / f"{name}.md").write_text(md)
+    (TABLES_DIR / f"{name}.md").write_text(md, encoding="utf-8")
     return TABLES_DIR / f"{name}.csv"
 
 
