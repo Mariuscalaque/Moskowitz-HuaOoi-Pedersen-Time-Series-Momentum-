@@ -45,12 +45,16 @@ from src.config import FIGURES_DIR, TABLES_DIR
 from src.factors import fetch_ff_factors
 
 # Chemins vers les données
+import os
+
 from pathlib import Path as PathLib
 _TSMOM_CSV = PathLib("outputs/tables/diversified_tsmom_series.csv")
 _DATA_CSV  = PathLib("data/data_monthly_returns.csv")
 
-WINDOW   = 60      # fenêtre roulante (mois) — >= 60 recommandé pour la queue
-REFILTER = False   # True = refiltrage AR-GARCH-t par fenêtre (zéro look-ahead, + lent)
+# Paramètres : pilotables par variable d'environnement (utile depuis regenerate),
+# valeurs par défaut inchangées si lancé en standalone.
+WINDOW   = int(os.environ.get("EXT_B_WINDOW", "60"))          # fenêtre roulante (mois)
+REFILTER = os.environ.get("EXT_B_REFILTER", "0") == "1"        # 1 = refiltrage par fenêtre
 
 # =========================================================
 # (1) Charger les données — strictement identique à Ext A
