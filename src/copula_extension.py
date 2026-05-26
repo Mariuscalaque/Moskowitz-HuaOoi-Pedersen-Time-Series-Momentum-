@@ -16,6 +16,22 @@ sépare une vraie application d'un placage naïf :
 
 Prédiction testable du straddle : λ_L > 0 ET λ_U > 0 (co-mouvement fort aux
 DEUX extrêmes), avec asymétrie possible (protection plus forte dans les krachs).
+
+CORRECTIONS (revue méthodologique) :
+  - filter_marginal : le diagnostic résiduel est désormais un VRAI Ljung-Box sur
+    les résidus standardisés AU CARRÉ (test d'ARCH résiduel), et non un test KS
+    contre la normale qui était à la fois mal nommé et non pertinent.
+  - exceedance_correlation : ajout du BENCHMARK GAUSSIEN (Boyer-Gibson-Loretan).
+    Conditionner sur deux grands mouvements gonfle mécaniquement la corrélation,
+    même sous une normale bivariée à corrélation constante. On simule donc une
+    normale de même ρ inconditionnel et on lui applique le même conditionnement :
+    seul l'ÉCART empirique − gaussien est interprétable comme dépendance de queue.
+  - cvm_gof : l'échantillon Monte-Carlo de référence Student-t est tiré UNE fois
+    (et non à chaque itération bootstrap) -> beaucoup plus rapide.
+  - rolling_copula : fenêtre par défaut portée à 60 mois (la dépendance de queue
+    est ininterprétable sur 36 obs) ; option `refilter` pour refiltrer les marges
+    DANS chaque fenêtre (zéro fuite d'information future) en plus du filtrage
+    global standard (type Patton 2006), descriptif et assumé.
 """
 from __future__ import annotations
 import warnings
@@ -23,6 +39,7 @@ import numpy as np
 import pandas as pd
 from scipy import stats, optimize
 from arch import arch_model
+from statsmodels.stats.diagnostic import acorr_ljungbox
 from statsmodels.distributions.copula.api import (
     GaussianCopula, StudentTCopula, ClaytonCopula, GumbelCopula, FrankCopula,
 )
@@ -33,22 +50,33 @@ warnings.filterwarnings("ignore")
 # ----------------------------------------------------------------------
 # (1) Filtrage des marges : AR(1)-GARCH(1,1) à innovations Student-t
 # ----------------------------------------------------------------------
-def filter_marginal(series: pd.Series) -> tuple[pd.Series, dict]:
+def filter_marginal(series: pd.Series, lb_lags: int = 10) -> tuple[pd.Series, dict]:
     """Renvoie les résidus standardisés iid et un résumé du modèle.
+
     arch travaille mieux en échelle ~%, on multiplie par 100 puis on garde
-    les résidus standardisés (sans unité, donc l'échelle est neutralisée)."""
+    les résidus standardisés (sans unité, donc l'échelle est neutralisée).
+
+    Diagnostic : Ljung-Box sur les résidus standardisés AU CARRÉ. H0 = pas
+    d'autocorrélation des carrés = pas d'ARCH résiduel. Une p-value ÉLEVÉE
+    (> 0.05) indique donc que le GARCH a bien capté le clustering de volatilité.
+    """
     s = series.dropna() * 100.0
     am = arch_model(s, mean="AR", lags=1, vol="GARCH", p=1, q=1, dist="t")
     res = am.fit(disp="off")
     std_resid = (res.resid / res.conditional_volatility).dropna()
-    # Ljung-Box sur résidus² : reste-t-il du clustering ?
-    lb = stats.kstest((std_resid - std_resid.mean()) / std_resid.std(),
-                      "norm").pvalue
+
+    # Ljung-Box sur les résidus standardisés au carré -> ARCH résiduel
+    try:
+        lb = acorr_ljungbox(std_resid ** 2, lags=[lb_lags], return_df=True)
+        lb_p = float(lb["lb_pvalue"].iloc[0])
+    except Exception:
+        lb_p = np.nan
+
     info = {
         "nu (innov.)": float(res.params.get("nu", np.nan)),
         "alpha+beta (persist.)": float(res.params.get("alpha[1]", np.nan)
                                         + res.params.get("beta[1]", np.nan)),
-        "KS resid p": lb,
+        f"LB resid^2 p (lag{lb_lags})": lb_p,
     }
     return std_resid, info
 
@@ -157,23 +185,47 @@ def empirical_tail_dependence(u: np.ndarray, q: float = 0.10) -> dict:
 
 
 def exceedance_correlation(x: pd.Series, y: pd.Series,
-                           thresholds=np.arange(0.0, 1.4, 0.2)) -> pd.DataFrame:
+                           thresholds=np.arange(0.0, 1.4, 0.2),
+                           n_sim: int = 200_000, seed: int = 7) -> pd.DataFrame:
     """Corrélations d'exceedance (Longin-Solnik / Ang-Chen) sur résidus
-    standardisés. Pour chaque seuil c :
+    standardisés, AVEC benchmark gaussien (Boyer-Gibson-Loretan).
+
+    Pour chaque seuil c :
       - côté négatif : corr(x,y | x<-c & y<-c)  (krachs joints)
       - côté positif : corr(x,y | x>+c & y>+c)  (booms joints)
-    Un straddle ASYMÉTRIQUE => corrélation négative-extrême > positive-extrême.
+    Conditionner sur de grands mouvements gonfle MÉCANIQUEMENT la corrélation,
+    même sous une normale bivariée à corrélation constante. On simule donc une
+    normale de même ρ inconditionnel et on lui applique le même conditionnement.
+    Colonnes *_gauss = ce que produirait l'absence de dépendance de queue ;
+    seul l'écart (corr_neg − corr_neg_gauss) est interprétable comme un straddle.
+    Un straddle ASYMÉTRIQUE => excès côté négatif > excès côté positif.
     """
-    xs = (x - x.mean()) / x.std()
-    ys = (y - y.mean()) / y.std()
+    xs = ((x - x.mean()) / x.std()).to_numpy()
+    ys = ((y - y.mean()) / y.std()).to_numpy()
+    rho = float(np.corrcoef(xs, ys)[0, 1])
+
+    # Échantillon normal bivarié de même corrélation -> benchmark sans tail-dep
+    rng = np.random.default_rng(seed)
+    g = rng.multivariate_normal([0.0, 0.0], [[1.0, rho], [rho, 1.0]], size=n_sim)
+    gx, gy = g[:, 0], g[:, 1]
+
+    def _cond_corr(a, b, mask):
+        return float(np.corrcoef(a[mask], b[mask])[0, 1]) if mask.sum() > 5 else np.nan
+
     rows = []
     for c in thresholds:
         neg = (xs < -c) & (ys < -c)
         pos = (xs > c) & (ys > c)
-        rn = np.corrcoef(xs[neg], ys[neg])[0, 1] if neg.sum() > 5 else np.nan
-        rp = np.corrcoef(xs[pos], ys[pos])[0, 1] if pos.sum() > 5 else np.nan
-        rows.append({"threshold": c, "corr_neg": rn, "n_neg": int(neg.sum()),
-                     "corr_pos": rp, "n_pos": int(pos.sum())})
+        gneg = (gx < -c) & (gy < -c)
+        gpos = (gx > c) & (gy > c)
+        rows.append({
+            "threshold": c,
+            "corr_neg": _cond_corr(xs, ys, neg), "n_neg": int(neg.sum()),
+            "corr_pos": _cond_corr(xs, ys, pos), "n_pos": int(pos.sum()),
+            "corr_neg_gauss": _cond_corr(gx, gy, gneg),
+            "corr_pos_gauss": _cond_corr(gx, gy, gpos),
+            "rho": rho,
+        })
     return pd.DataFrame(rows)
 
 
@@ -186,22 +238,31 @@ def _emp_copula(u, points):
 
 
 def cvm_gof(u: np.ndarray, family: str, fitted: dict, n_boot: int = 200,
-            seed: int = 12345) -> dict:
+            seed: int = 12345, mc_ref: int = 60_000) -> dict:
     """Statistique Sn = somme (C_n - C_theta)² aux pseudo-obs, p-value par
-    bootstrap paramétrique. p-value haute => on NE rejette PAS la copule."""
+    bootstrap paramétrique. p-value haute => on NE rejette PAS la copule.
+
+    Perf : pour la Student-t (CDF sans forme fermée) l'échantillon Monte-Carlo
+    de référence est tiré UNE seule fois (la copule de référence est fixe), au
+    lieu d'être régénéré à chaque itération bootstrap.
+    """
     rng = np.random.default_rng(seed)
     n = len(u)
     pts = u
 
-    def cdf_of(family, par, P):
-        if family == "Gaussian":
+    # Référence Monte-Carlo pour la CDF Student-t (copule de H0 fixe) — tirée 1x
+    studt_ref = None
+    if family == "Student-t":
+        studt_ref = StudentTCopula(corr=fitted["rho"], df=fitted["df"]).rvs(
+            mc_ref, random_state=rng)
+
+    def cdf_of(fam, par, P):
+        if fam == "Gaussian":
             return GaussianCopula(corr=par["rho"]).cdf(P)
-        if family == "Student-t":
-            # CDF non close-form -> approximation Monte-Carlo (échantillon fixe)
-            S = StudentTCopula(corr=par["rho"], df=par["df"]).rvs(40000, random_state=rng)
-            A, B = S[:, 0][None, :], S[:, 1][None, :]
+        if fam == "Student-t":
+            A, B = studt_ref[:, 0][None, :], studt_ref[:, 1][None, :]
             return np.mean((A <= P[:, 0][:, None]) & (B <= P[:, 1][:, None]), axis=1)
-        cls = {"Clayton": ClaytonCopula, "Gumbel": GumbelCopula, "Frank": FrankCopula}[family]
+        cls = {"Clayton": ClaytonCopula, "Gumbel": GumbelCopula, "Frank": FrankCopula}[fam]
         return cls(theta=par["theta"]).cdf(P)
 
     Cn = _emp_copula(u, pts)
@@ -225,3 +286,74 @@ def cvm_gof(u: np.ndarray, family: str, fitted: dict, n_boot: int = 200,
         if np.sum((Cnb - Cthb) ** 2) >= Sn:
             count += 1
     return {"family": family, "Sn": Sn, "p_value": (count + 0.5) / (n_boot + 1)}
+
+
+# ----------------------------------------------------------------------
+# Extension B — Copule roulante (rolling window)
+# ----------------------------------------------------------------------
+def rolling_copula(z1: pd.Series, z2: pd.Series, window: int = 60,
+                   refilter: bool = False) -> pd.DataFrame:
+    """Estime la meilleure copule sur des fenêtres roulantes de `window` mois.
+
+    DEUX modes (cf. revue méthodologique) :
+
+      refilter=False (DÉFAUT) — z1/z2 sont des RÉSIDUS déjà filtrés AR-GARCH-t
+        sur TOUT l'échantillon (filtrage marginal global, standard type
+        Patton 2006). Seule la copule roule. C'est un exercice DESCRIPTIF a
+        posteriori : le GARCH global utilise l'information plein-échantillon,
+        ce qui est assumé (aucune prétention « temps réel »). Plus stable car
+        le GARCH n'est jamais estimé sur une poignée de points.
+
+      refilter=True — z1/z2 sont les SÉRIES BRUTES ; on refiltre AR(1)-GARCH(1,1)-t
+        DANS chaque fenêtre. AUCUNE fuite d'information future, au prix d'un GARCH
+        estimé sur `window` points seulement (plus bruité) et d'un calcul plus lent.
+        En cas de non-convergence du GARCH sur une fenêtre, repli sur une
+        standardisation simple (centrage/réduction) de la fenêtre.
+
+    `window` >= 60 est recommandé : la dépendance de queue est ininterprétable
+    sur ~36 obs (3-4 points par queue à 10 %).
+
+    Retourne un DataFrame indexé par la DATE DE FIN de chaque fenêtre avec :
+      best_family, lambda_L/U (copule retenue), lambda_L_t (Student-t),
+      lambda_L_cl (Clayton), AIC_best, AIC_gauss.
+    """
+    df = pd.concat([z1, z2], axis=1).dropna()
+    n_total = len(df)
+    records = []
+
+    def _window_pseudo_obs(sub: pd.DataFrame) -> np.ndarray:
+        if not refilter:
+            return sub.rank().to_numpy() / (len(sub) + 1.0)
+        # refiltrage par fenêtre (zéro look-ahead)
+        cols = []
+        for c in sub.columns:
+            try:
+                r, _ = filter_marginal(sub[c])
+            except Exception:
+                v = sub[c]
+                r = (v - v.mean()) / v.std()        # repli si GARCH échoue
+            cols.append(r.rename(c))
+        sub2 = pd.concat(cols, axis=1).dropna()
+        return sub2.rank().to_numpy() / (len(sub2) + 1.0)
+
+    for i in range(window, n_total + 1):
+        sub = df.iloc[i - window: i]
+        u = _window_pseudo_obs(sub)
+        fit = fit_all_copulas(u)
+        best = fit["AIC"].astype(float).idxmin()
+        records.append({
+            "date": sub.index[-1],
+            "best_family": best,
+            "lambda_L": float(fit.loc[best, "lambda_L"]),
+            "lambda_U": float(fit.loc[best, "lambda_U"]),
+            "lambda_L_t": float(fit.loc["Student-t", "lambda_L"]),
+            "lambda_L_cl": float(fit.loc["Clayton", "lambda_L"]),
+            "AIC_best": float(fit.loc[best, "AIC"]),
+            "AIC_gauss": float(fit.loc["Gaussian", "AIC"]),
+        })
+        if (i - window) % 24 == 0:
+            pct = (i - window) / max(n_total - window, 1) * 100
+            print(f"  rolling copula : {pct:5.1f}%  ({sub.index[-1]:%Y-%m})", flush=True)
+    result = pd.DataFrame(records).set_index("date")
+    print("  rolling copula : 100.0%  — terminé")
+    return result

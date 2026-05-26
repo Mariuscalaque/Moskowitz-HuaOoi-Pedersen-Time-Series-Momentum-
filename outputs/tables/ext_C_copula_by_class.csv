@@ -1,0 +1,5 @@
+Asset class,Label,Best copula,λ_L (param),λ_U (param),λ_L (emp 10%),λ_U (emp 10%),Asym. emp (λ_L−λ_U),ΔAIC vs Gaussian
+Equity,Actions,Student-t,0.317,0.317,0.418,0.258,0.16,82.52
+Bond,Obligations,Gumbel,0.0,0.079,0.07,0.188,-0.118,2.84
+Commodity,Matières premières,Gumbel,0.0,0.011,0.035,0.188,-0.153,0.07
+Currency,Changes,Student-t,0.117,0.117,0.262,0.122,0.14,11.37

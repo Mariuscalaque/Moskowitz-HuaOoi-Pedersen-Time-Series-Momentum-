@@ -1,0 +1,11 @@
+,value
+Best copula (AIC),Student-t
+Best copula (BIC),Student-t
+lambda_L (best),0.17113567271283991
+lambda_U (best),0.17113567271283991
+lambda_L emp (q=.10),0.20905923344947736
+lambda_U emp (q=.10),0.25783972125435484
+"asymmetry emp (L-U, q=.10)",-0.04878048780487748
+Gaussian rejected? (p<.05),False
+Best not rejected? (p>.05),True
+N,287
