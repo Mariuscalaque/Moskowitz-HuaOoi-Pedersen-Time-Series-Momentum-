@@ -292,6 +292,12 @@ def build_vme_factor_matrix(vme: pd.DataFrame,
     Robuste au cas où le CSV a perdu ses en-têtes (colonnes 'nan', 'Unnamed…') :
     on identifie VAL/MOM par nom si possible, sinon par POSITION (col 0 = VAL,
     col 1 = MOM, convention du fichier AQR). On renomme en VAL_EVR / MOM_EVR.
+
+    CAVEAT MILLÉSIME : le fichier AQR public est la version « updated and extended »
+    d'Asness-Moskowitz-Pedersen (2013, JF), reconstruite à chaque mise à jour, et
+    NON la version working-paper 2010 qu'utilisait MOP (2012). Les chargements
+    VAL/MOM peuvent donc différer de la Table 3B publiée (p. ex. le signe de VAL)
+    sans erreur de réplication : c'est une différence de DONNÉES, à signaler.
     """
     cols = list(vme.columns)
     val_col = mom_col = None

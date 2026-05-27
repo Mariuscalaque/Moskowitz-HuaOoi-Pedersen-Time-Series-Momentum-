@@ -114,6 +114,46 @@ print("\n=== (3) Statistiques λ_L par régime ===")
 print(regime_stats.to_string())
 
 # =========================================================
+# (3 bis) PONT THÉORIQUE — Copule de PANIQUE de Meucci (Exo 1 du cours)
+#   La copule roulante MONTRE empiriquement l'alternance de régimes (gaussienne
+#   en calme, queue-dépendante en crise). Meucci la MODÉLISE paramétriquement
+#   comme un MÉLANGE CONVEXE de deux copules gaussiennes :
+#       c = (1−p)·c_Gauss(ρ_calm) + p·c_Gauss(ρ_panic),   ρ_panic ≫ ρ_calm
+#   - « combinaison convexe de copules = copule » (cours p. 17) -> c'est licite ;
+#   - p = « déclencheur de panique » b du cours (rare) ;
+#   - les probabilités flexibles de Meucci = le changement de mesure qui repondère
+#     les observations (ici, le poids p du régime de panique).
+#   Cross-check : p (paramétrique) doit être de l'ordre de la FRÉQUENCE EMPIRIQUE
+#   des fenêtres « tail-dependent » de la copule roulante.
+# =========================================================
+print("\n=== (3 bis) Copule de panique de Meucci (melange convexe) ===")
+u_full, _idx_full = ce.to_pseudo_obs(z_ts.rename("TS"), z_mk.rename("MK"))
+panic = ce.fit_panic_copula(u_full)
+aic_gauss_full = float(ce.fit_all_copulas(u_full).loc["Gaussian", "AIC"])
+# Fraction de fenetres a dependance de queue REELLEMENT marquee (lambda_L eleve),
+# bien plus parlante que "% non-gaussien" (la Student-t bat la gaussienne d'un
+# cheveu presque partout -> barre AIC trop basse).
+frac_strong = float((rolling["lambda_L"] >= 0.15).mean())
+print(f"\n=== (3 bis) Copule de panique de Meucci (melange convexe) ===")
+print(f"  rho_calm  = {panic['rho_calm']:.3f}")
+print(f"  rho_panic = {panic['rho_panic']:.3f}   (>> rho_calm : la correl bondit en panique)")
+print(f"  p (panique, ~ b du cours) = {panic['p_panic']:.3f}")
+print(f"  AIC panique = {panic['AIC']:.2f}  vs  AIC gaussienne = {aic_gauss_full:.2f}")
+print(f"  lambda_L simule du melange (q=10%) = {panic['lambda_L_emp_sim']:.3f} "
+      f"(chaque regime est gaussien : lambda asymptotique = 0 -> la PANIQUE")
+print(f"   fabrique de la dependance de queue a distance finie : point de Meucci)")
+print(f"  Cross-check : p={panic['p_panic']:.3f}  vs  fraction de fenetres roulantes")
+print(f"   a lambda_L eleve (>=0.15) = {frac_strong:.3f}  (ordres de grandeur coherents)")
+TABLES_DIR.mkdir(parents=True, exist_ok=True)
+pd.DataFrame([{
+    "rho_calm": panic["rho_calm"], "rho_panic": panic["rho_panic"],
+    "p_panic": panic["p_panic"], "AIC_panic": panic["AIC"],
+    "AIC_gaussian": aic_gauss_full, "lambda_L_sim_q10": panic["lambda_L_emp_sim"],
+    "lambda_U_sim_q10": panic["lambda_U_emp_sim"],
+    "rolling_frac_lambdaL_ge_0.15": frac_strong,
+}]).to_csv(TABLES_DIR / "ext_B_panic_copula.csv", index=False)
+
+# =========================================================
 # (5) Figures
 # =========================================================
 

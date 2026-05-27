@@ -161,13 +161,29 @@ def build_fx_cross_pairs(fx_vs_usd: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(out)
 
 
+def _splice_gasoline(fut: pd.DataFrame) -> pd.DataFrame:
+    """Splice « RBOB Gasoline spliced with Unleaded Gasoline » de MOP (App. A.4) :
+    le papier traite l'essence comme UN SEUL contrat (24 commodities, pas 25).
+    On garde le RBOB (XB1) où il existe et on complète l'historique antérieur par
+    l'Unleaded (HU1), puis on supprime la colonne Unleaded séparée. Sans cela,
+    l'essence comptait double (25 commodities) et sur-pondérait légèrement la classe.
+    """
+    if "XB1 Comdty" in fut.columns and "HU1 Comdty" in fut.columns:
+        fut = fut.copy()
+        fut["XB1 Comdty"] = fut["XB1 Comdty"].combine_first(fut["HU1 Comdty"])
+        fut = fut.drop(columns=["HU1 Comdty"])
+    return fut
+
+
 def build_daily_excess_returns(prices: pd.DataFrame,
                                fx_cross: bool = FX_CROSS_PAIRS) -> pd.DataFrame:
-    """Concatène futures (roulés) et devises en rendements journaliers excédentaires.
+    """Concatène futures (roulés, essence splicée) et devises en rendements
+    journaliers excédentaires.
 
-    `fx_cross=True` (défaut) construit les 36 paires croisées ; `False` garde les
-    10 paires vs-USD (ancien comportement)."""
-    fut = futures_daily_excess_returns(prices)
+    `fx_cross=False` (défaut) garde les ~10 paires vs-USD (fidèle aux 58
+    instruments du papier) ; `True` construit les 36 paires croisées (robustesse
+    Table 4 seulement)."""
+    fut = _splice_gasoline(futures_daily_excess_returns(prices))
     fx_vs_usd = fx_daily_excess_returns(prices)
     fx = build_fx_cross_pairs(fx_vs_usd) if fx_cross else fx_vs_usd
     return pd.concat([fut, fx], axis=1)

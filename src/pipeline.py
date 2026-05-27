@@ -224,6 +224,11 @@ def run(start: str = PAPER_START, end: str = PAPER_END,
     t5b = decomposition_by_asset_class(scaled_ret.loc[m], lookback=LOOKBACK_MONTHS)
     t5c = pd.DataFrame()
     targets = {}
+    # Panel C du papier : les PREMIÈRES lignes régressent XSMOM (ALL + par classe)
+    # sur TSMOM (TSMOM « explique-t-il » le momentum cross-sectionnel ?).
+    for ac in ("ALL", "Commodity", "Equity", "Bond", "Currency"):
+        if ac in xsmom_ac.columns:
+            targets[f"XSMOM {ac}"] = xsmom_ac[ac].loc[m]
     # facteurs FF + indices hedge funds externes si dispo
     try:
         ff = fetch_ff_factors(start=start, end=end, source="auto")

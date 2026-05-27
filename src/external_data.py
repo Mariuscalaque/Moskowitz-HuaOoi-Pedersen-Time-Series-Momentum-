@@ -214,17 +214,32 @@ def _parse_aqr_excel(raw: bytes, header_tokens=("date",)) -> pd.DataFrame:
     header_row = None
     for r in range(min(40, len(raw_df))):
         c0 = raw_df.iat[r, 0]
-        if isinstance(c0, str) and any(tok in c0.strip().lower()
-                                       for tok in header_tokens):
-            header_row = r
-            break
-    if header_row is None:
-        # repli : 1re ligne dont la cellule 0 se parse en date -> en-tête = r-1
-        for r in range(1, min(40, len(raw_df))):
-            try:
-                pd.to_datetime(raw_df.iat[r, 0])
-                header_row = r - 1
+        # BUGFIX : il faut une ÉGALITÉ exacte (« date »/« DATE ») et non une
+        # sous-chaîne — sinon les lignes de préambule « Data are updated… » ou
+        # « This file… » capturaient « date » (dans up-DATE-d / Data) comme
+        # en-tête, d'où des colonnes 'nan' (cf. ancienne cache aqr_vme_factors.csv).
+        # On exige en plus une vraie ligne d'en-tête : >= 3 cellules non vides.
+        if isinstance(c0, str) and c0.strip().lower() in header_tokens:
+            nonempty = sum(1 for x in raw_df.iloc[r].tolist()
+                           if isinstance(x, str) and x.strip() != "")
+            if nonempty >= 3:
+                header_row = r
                 break
+    if header_row is None:
+        # repli : 1re ligne dont la cellule 0 est une VRAIE date -> en-tête = r-1.
+        # BUGFIX : on saute les cellules vides (pd.to_datetime(nan) renvoie NaT
+        # SANS lever d'exception, ce qui plaçait l'en-tête sur une ligne de
+        # préambule — cf. fichier AQR TSMOM dont la cellule d'en-tête « date »
+        # est vide). On exige une date valide (non-NaT) et une cellule non vide.
+        for r in range(1, min(40, len(raw_df))):
+            c0 = raw_df.iat[r, 0]
+            if c0 is None or (isinstance(c0, float) and pd.isna(c0)):
+                continue
+            try:
+                d = pd.to_datetime(c0)
+                if pd.notna(d):
+                    header_row = r - 1
+                    break
             except Exception:
                 continue
     if header_row is None:

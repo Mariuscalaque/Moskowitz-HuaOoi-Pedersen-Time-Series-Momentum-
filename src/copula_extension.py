@@ -6,13 +6,31 @@ global et dilue l'effet. On le remplace par une mesure non-paramétrique et
 focalisée sur les extrêmes : la dépendance de queue entre les rendements TSMOM
 et les rendements du marché.
 
-Procédure rigoureuse en 2 étapes (IFM / méthode des marges) — c'est ce qui
-sépare une vraie application d'un placage naïf :
+MOTIVATION (lien réplication ↔ cours) : le test du « smile » du papier — la
+régression TSMOM ~ MKT + MKT² (Table 3C) — ressort NON significatif dans notre
+réplication (β_{MKT²} t ≈ 1.1). Or ce test paramétrique est symétrique, global
+et dilue l'effet d'option. La prédiction économique sous-jacente (TSMOM = un
+STRADDLE sur le marché : il gagne dans les grands mouvements des DEUX côtés) est
+en réalité une affirmation de DÉPENDANCE DE QUEUE. On la teste donc directement
+avec l'outillage copules du cours, là où le polynôme du 2nd degré échoue.
+
+Procédure semi-paramétrique — approche CANONIQUE / CML du cours (méthode ③,
+PIT empirique), à ne pas confondre avec l'IFM (méthode ② qui injecte des marges
+PARAMÉTRIQUES) :
   (1) Filtrer CHAQUE marge par AR(1)-GARCH(1,1) à innovations Student-t
-      -> résidus standardisés approximativement iid.
-  (2) PIT non-paramétrique (rang/(n+1)) -> pseudo-observations uniformes.
-  (3) Ajuster les copules sur ces pseudo-observations, sélection AIC/BIC,
-      test d'adéquation (Cramér-von Mises) et report explicite de λ_L, λ_U.
+      -> résidus standardisés ≈ iid = INVARIANTS DE MARCHÉ au sens de Meucci
+      (homogènes dans le temps, iid). C'est le conditionnement de Patton (2006).
+  (2) PIT non-paramétrique (rang/(n+1)) = fonction de répartition empirique
+      (Deheuvels) -> pseudo-observations uniformes (étape 1 de la méthode
+      canonique). La PROPRIÉTÉ D'INVARIANCE des copules justifie cette PIT par
+      les rangs (la copule est inchangée par transformation strictement croissante).
+  (3) Ajuster les copules sur ces pseudo-observations (étape 2 canonique :
+      α̂_CML = argmax Σ ln c(û ; α)), sélection AIC/BIC, test d'adéquation
+      (Cramér-von Mises), report explicite de λ_L, λ_U.
+  (4) MESURES DE DÉPENDANCE du cours (Spearman, Kendall, Blomqvist,
+      Schweizer-Wolff, Hoeffding) + rappel de l'impossibilité d'Embrechts (1999).
+  (5) Encadrement de FRÉCHET : copule empirique vs bornes C⁻ ≤ C ≤ C⁺ et copule
+      produit (indépendance).
 
 Prédiction testable du straddle : λ_L > 0 ET λ_U > 0 (co-mouvement fort aux
 DEUX extrêmes), avec asymétrie possible (protection plus forte dans les krachs).
@@ -357,3 +375,126 @@ def rolling_copula(z1: pd.Series, z2: pd.Series, window: int = 60,
     result = pd.DataFrame(records).set_index("date")
     print("  rolling copula : 100.0%  — terminé")
     return result
+
+
+# ======================================================================
+# (4) MESURES DE DÉPENDANCE DU COURS (pp. 31-34)
+#     Spearman, Kendall, Blomqvist, Schweizer-Wolff, Hoeffding + Pearson.
+#     Rappel des 5 axiomes et de l'IMPOSSIBILITÉ d'Embrechts (1999) :
+#     aucune mesure ne vérifie simultanément (4) invariance par transformation
+#     strictement monotone ET (5) indépendance ⟺ δ=0. Les corrélations de RANG
+#     (Spearman/Kendall) et Blomqvist vérifient (1)(2)(3)(4) ; la dépendance de
+#     queue capte le (5) local. Pearson ne vérifie NI (4) NI (5) : ce n'est pas
+#     une vraie mesure de dépendance, on ne la garde que pour contraste.
+# ======================================================================
+def dependence_measures(u: np.ndarray, grid_n: int = 50) -> dict:
+    """Mesures de dépendance calculées sur les pseudo-observations (copule).
+
+    Toutes ne dépendent QUE de la copule (donc invariantes par transformation
+    strictement croissante des marges — propriété d'invariance, cours p. 17/22),
+    sauf Pearson sur les niveaux (fournie séparément en amont pour contraste).
+
+    Renvoie : Spearman ρ_S, Kendall τ, Blomqvist β = 4·Ĉ(½,½)−1,
+    Schweizer-Wolff σ = 12∫∫|C−uv|, Hoeffding Φ = √(90·∫∫(C−uv)²),
+    et Pearson_sur_rangs (≈ Spearman, pour montrer l'écart à Pearson-niveaux).
+    """
+    U, V = u[:, 0], u[:, 1]
+    spearman = float(stats.spearmanr(U, V).statistic)
+    kendall = float(stats.kendalltau(U, V).statistic)
+    # Blomqvist (corrélation médiale) = 4·C(1/2,1/2) − 1
+    blomqvist = 4.0 * float(np.mean((U <= 0.5) & (V <= 0.5))) - 1.0
+    # Schweizer-Wolff & Hoeffding via copule empirique (Deheuvels) sur une grille
+    g = (np.arange(1, grid_n + 1) - 0.5) / grid_n
+    Cg = np.array([[np.mean((U <= a) & (V <= b)) for b in g] for a in g])
+    indep = np.outer(g, g)
+    sw = 12.0 * float(np.mean(np.abs(Cg - indep)))                 # σ (P=1)
+    hoeffding = float(np.sqrt(90.0 * np.mean((Cg - indep) ** 2)))   # Φ
+    pearson_ranks = float(np.corrcoef(U, V)[0, 1])
+    return {
+        "Spearman_rho": spearman, "Kendall_tau": kendall,
+        "Blomqvist_beta": blomqvist, "Schweizer_Wolff_sigma": sw,
+        "Hoeffding_Phi": hoeffding, "Pearson_on_ranks": pearson_ranks,
+    }
+
+
+# ======================================================================
+# (5) ENCADREMENT DE FRÉCHET (cours p. 18 et Exercice 3 p. 30)
+#     Section diagonale : Ĉ(t,t) comparée à C⁺ (comonotone), C⁻ (contre-
+#     monotone) et à la copule produit Π (indépendance). On vérifie
+#     visuellement C⁻ ≤ Ĉ ≤ C⁺ et l'écart à l'indépendance.
+# ======================================================================
+def frechet_diagonal(u: np.ndarray, n: int = 101) -> pd.DataFrame:
+    U, V = u[:, 0], u[:, 1]
+    t = np.linspace(0.0, 1.0, n)
+    Cemp = np.array([np.mean((U <= x) & (V <= x)) for x in t])
+    return pd.DataFrame({
+        "t": t,
+        "C_emp": Cemp,                       # copule empirique (Deheuvels)
+        "C_plus": t,                         # borne haute C⁺ = min(t,t) = t
+        "C_minus": np.maximum(2 * t - 1, 0), # borne basse C⁻ = max(2t−1,0)
+        "C_indep": t ** 2,                   # copule produit Π = t²
+    })
+
+
+# ======================================================================
+# COPULE DE PANIQUE DE MEUCCI (Exercice 1 du cours, pp. 26-27)
+#     Mélange convexe de DEUX copules gaussiennes : régime calme (corrélation
+#     ρ_calm) la plupart du temps, régime de panique (corrélation ρ_panic ≫ ρ_calm)
+#     avec probabilité p (le « déclencheur de panique » b du cours).
+#         c_panic(u,v) = (1−p)·c_Gauss(u,v; ρ_calm) + p·c_Gauss(u,v; ρ_panic)
+#     C'est une COPULE par la proposition « toute combinaison convexe de copules
+#     est une copule » (cours p. 17), particulièrement utile pour représenter une
+#     dépendance ASYMÉTRIQUE de marché. Chaque régime gaussien a λ=0 (asymptotique),
+#     mais le MÉLANGE crée une forte co-occurrence d'extrêmes À DISTANCE FINIE :
+#     c'est précisément le point de Meucci (la panique fabrique de la dépendance de
+#     queue apparente). On reporte donc λ EMPIRIQUE à q=10 % par simulation, en plus
+#     du λ asymptotique nul.
+# ======================================================================
+def fit_panic_copula(u: np.ndarray, n_sim: int = 200_000, seed: int = 3) -> dict:
+    def _gauss_lpdf(uu, rho):
+        return GaussianCopula(corr=rho).logpdf(uu)
+
+    def nll(par):
+        rc, rp, p = par
+        # Fidélité au cours (Exo 1) : panique RARE (p petit) et corrélation de
+        # panique >= corrélation calme. On borne rc >= 0 pour que le régime calme
+        # reste un régime de co-mouvement faible/normal (sinon non-identifiabilité).
+        if not (0.0 <= rc <= rp < 0.98 and 0.01 < p < 0.35):
+            return 1e10
+        try:
+            lpc = _gauss_lpdf(u, rc)
+            lpp = _gauss_lpdf(u, rp)
+            m = np.logaddexp(np.log(1 - p) + lpc, np.log(p) + lpp)
+            return -float(np.sum(m)) if np.all(np.isfinite(m)) else 1e10
+        except Exception:
+            return 1e10
+
+    best = None
+    for x0 in ([0.08, 0.60, 0.10], [0.05, 0.80, 0.05], [0.15, 0.50, 0.15]):
+        r = optimize.minimize(nll, x0=x0, method="Nelder-Mead",
+                              options={"xatol": 1e-4, "fatol": 1e-4})
+        if best is None or r.fun < best.fun:
+            best = r
+    rc, rp, p = best.x
+    logL, k = -best.fun, 3
+    n = len(u)
+
+    # λ empirique (q=10 %) par simulation du mélange ajusté
+    rng = np.random.default_rng(seed)
+    n_p = int(rng.binomial(n_sim, p))
+    sims = []
+    if n_p > 0:
+        sims.append(GaussianCopula(corr=rp).rvs(n_p, random_state=rng))
+    if n_sim - n_p > 0:
+        sims.append(GaussianCopula(corr=rc).rvs(n_sim - n_p, random_state=rng))
+    sim = np.vstack(sims)
+    q = 0.10
+    lamL = float(np.mean((sim[:, 0] <= q) & (sim[:, 1] <= q)) / q)
+    lamU = float((1 - 2 * (1 - q) + np.mean((sim[:, 0] <= 1 - q) & (sim[:, 1] <= 1 - q))) / q)
+    return {
+        "rho_calm": float(rc), "rho_panic": float(rp), "p_panic": float(p),
+        "logL": logL, "AIC": -2 * logL + 2 * k, "BIC": -2 * logL + k * np.log(n),
+        "lambda_L_emp_sim": lamL, "lambda_U_emp_sim": lamU,
+        "lambda_L_asym": 0.0, "lambda_U_asym": 0.0,  # mélange gaussien : λ asympt. = 0
+        "param": f"rho_calm={rc:.3f}, rho_panic={rp:.3f}, p={p:.3f}", "N": n,
+    }

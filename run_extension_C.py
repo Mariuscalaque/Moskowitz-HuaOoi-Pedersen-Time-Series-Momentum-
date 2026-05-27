@@ -154,6 +154,9 @@ for ac in ORDERED:
     # Dépendance de queue empirique (model-free, q=10 %)
     emp = ce.empirical_tail_dependence(u, q=0.10)
 
+    # Mesures de dépendance du cours (rang) par classe
+    dm = ce.dependence_measures(u)
+
     # Corrélations d'exceedance sur résidus standardisés (+ benchmark gaussien)
     exc = ce.exceedance_correlation(z_ts.reindex(idx), z_mk.reindex(idx))
 
@@ -164,6 +167,9 @@ for ac in ORDERED:
         "lambda_U":    lam_U,
         "lambda_L_emp": emp["lambda_L_emp"],
         "lambda_U_emp": emp["lambda_U_emp"],
+        "spearman":    dm["Spearman_rho"],
+        "kendall":     dm["Kendall_tau"],
+        "blomqvist":   dm["Blomqvist_beta"],
         "exc_df":      exc,
         "aic_gauss":   aic_gauss,
         "aic_best":    aic_best,
@@ -188,6 +194,10 @@ for ac, r in results.items():
         "λ_U (emp 10%)": round(r["lambda_U_emp"], 3),
         # Asymétrie sur les λ EMPIRIQUES (la param. Student-t est symétrique -> 0)
         "Asym. emp (λ_L−λ_U)": round(r["lambda_L_emp"] - r["lambda_U_emp"], 3),
+        # Mesures de dépendance de RANG du cours (invariantes, vraies mesures)
+        "Spearman ρ": round(r["spearman"], 3),
+        "Kendall τ": round(r["kendall"], 3),
+        "Blomqvist β": round(r["blomqvist"], 3),
         "ΔAIC vs Gaussian":    round(r["aic_gauss"] - r["aic_best"], 2),
     })
 summary_df = pd.DataFrame(summary_rows)

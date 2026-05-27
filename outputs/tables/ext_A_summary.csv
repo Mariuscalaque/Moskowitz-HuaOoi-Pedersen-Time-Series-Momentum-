@@ -1,11 +1,23 @@
 ,value
 Best copula (AIC),Student-t
 Best copula (BIC),Student-t
-lambda_L (best),0.17113567271283991
-lambda_U (best),0.17113567271283991
-lambda_L emp (q=.10),0.20905923344947736
-lambda_U emp (q=.10),0.25783972125435484
-"asymmetry emp (L-U, q=.10)",-0.04878048780487748
+lambda_L (best),0.1550647077381746
+lambda_U (best),0.1550647077381746
+lambda_L emp (q=.10),0.13937282229965156
+lambda_U emp (q=.10),0.32752613240418116
+"asymmetry emp (L-U, q=.10)",-0.1881533101045296
+Spearman rho,0.1364946029580176
+Kendall tau,0.09695182865914574
+Blomqvist beta,0.059233449477351874
+Schweizer-Wolff sigma,0.16199729059233453
+Hoeffding Phi,0.16008974634975406
+Pearson (levels),0.13423860539104582
+Panic rho_calm,3.836980623549647e-08
+Panic rho_panic,0.7983897279445096
+Panic p,0.25884532025115564
+Smile beta(MKT^2),0.862
+Smile t(MKT^2),1.12
+Tail excess vs gauss (neg),0.11998476901339003
 Gaussian rejected? (p<.05),False
 Best not rejected? (p>.05),True
 N,287
