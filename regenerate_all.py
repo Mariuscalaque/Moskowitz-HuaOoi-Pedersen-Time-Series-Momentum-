@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
 regenerate_all.py — Régénération COMPLÈTE en une passe : cœur de la réplication
-                    (pipeline) PUIS les trois extensions copule (A, B, C).
+                    (pipeline) PUIS la robustesse (extension A) et les extensions
+                    copule (B, C, D).
 
 Pourquoi ce script ?
   `regenerate.py` ne régénérait que le cœur (tables/figures/perf du papier).
@@ -15,8 +16,10 @@ Ordre d'exécution :
   1) (option) table rase : suppression de outputs/ ;
   2) pipeline principal -> outputs/tables, outputs/figures, performance_summary,
      diversified_tsmom_series ;
-  3) extensions A, B, C (sous-processus, cwd = racine projet) -> ext_A_*, ext_B_*,
-     ext_C_*, fig8..fig12 dans outputs/tables et outputs/figures.
+  3) extension A (robustesse : OOS, liquidite PS, turbulence) -> ext_A_*,
+     fig13..fig14. Autonome (reconstruit le TSMOM ->2025) ;
+  4) extensions copule B, C, D (sous-processus, cwd = racine projet) -> ext_B_*,
+     ext_C_*, ext_D_*, fig8..fig12 dans outputs/tables et outputs/figures.
 
 Usage :
     python regenerate_all.py                       # 1985-2009, avec externes, tout
@@ -24,8 +27,8 @@ Usage :
     python regenerate_all.py --no-external          # sans téléchargements
     python regenerate_all.py --skip-extensions      # cœur seulement (= ancien regenerate)
     python regenerate_all.py --skip-core            # extensions seulement (cœur déjà à jour)
-    python regenerate_all.py --refilter             # ext B sans look-ahead (refiltrage/fenêtre)
-    python regenerate_all.py --ext-b-window 48      # ext B : fenêtre roulante = 48 mois
+    python regenerate_all.py --refilter             # ext C (rolling) sans look-ahead (refiltrage)
+    python regenerate_all.py --ext-b-window 48      # ext C (rolling) : fenêtre roulante = 48 mois
     python regenerate_all.py --no-clean             # ne pas effacer outputs/ d'abord
 """
 import argparse
@@ -41,9 +44,10 @@ from src.pipeline import run
 _ROOT = Path(__file__).resolve().parent
 
 EXTENSIONS = [
-    ("Extension A — copule TSMOM-Marche (plein echantillon)", "run_extension_A.py"),
-    ("Extension B — rolling copula (stabilite temporelle)",   "run_extension_B.py"),
-    ("Extension C — dependance de queue par classe d'actifs", "run_extension_C.py"),
+    ("Extension A — robustesse : OOS, liquidite PS, turbulence", "run_extension_A.py"),
+    ("Extension B — copule TSMOM-Marche (plein echantillon)",    "run_extension_B.py"),
+    ("Extension C — rolling copula (stabilite temporelle)",      "run_extension_C.py"),
+    ("Extension D — dependance de queue par classe d'actifs",    "run_extension_D.py"),
 ]
 
 
@@ -75,9 +79,9 @@ def main():
     ap.add_argument("--skip-core", action="store_true",
                     help="ne regenerer QUE les extensions (le coeur doit deja etre a jour)")
     ap.add_argument("--refilter", action="store_true",
-                    help="ext B : refiltrage AR-GARCH-t par fenetre (zero look-ahead, plus lent)")
+                    help="ext C (rolling) : refiltrage AR-GARCH-t par fenetre (zero look-ahead, plus lent)")
     ap.add_argument("--ext-b-window", type=int, default=60,
-                    help="ext B : taille de la fenetre roulante en mois (defaut 60)")
+                    help="ext C (rolling) : taille de la fenetre roulante en mois (defaut 60)")
     args = ap.parse_args()
 
     # 1) Table rase (sauf si on ne touche pas au coeur, ou --no-clean)

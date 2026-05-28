@@ -296,3 +296,80 @@ def figure7_impulse_response(irf: pd.DataFrame, save_name: str = "fig7_impulse_r
         axes[1].set_title("Fig. 7B — Speculator position response", loc="left")
     fig.tight_layout()
     return _save(fig, save_name)
+
+# -----------------------------------------------------------------------
+# Extension D — Robustesse : hors échantillon & turbulence
+# -----------------------------------------------------------------------
+
+def figure_oos_cumulative(tsmom: pd.Series,
+                          split: str = "2009-12-31",
+                          save_name: str = "fig13_oos_cumulative"):
+    """Croissance de 100 $ dans le TSMOM, échantillon papier (1985-2009) vs
+    hors échantillon (2010-2025). Trait vertical = fin de l'échantillon MOP ;
+    la zone OOS est ombrée. Les ratios de Sharpe des deux régimes sont annotés."""
+    r = tsmom.dropna()
+    growth = (1.0 + r).cumprod() * 100.0
+    sp = pd.Timestamp(split)
+    ins = r[r.index <= sp]
+    oos = r[r.index > sp]
+
+    def _sh(x):
+        return x.mean() / x.std() * np.sqrt(12) if len(x) > 12 and x.std() > 0 else np.nan
+
+    fig, ax = plt.subplots(figsize=(11, 5.5))
+    ax.plot(growth.index, growth.values, color="#1f3a93", lw=1.8,
+            label="Time Series Momentum")
+    ax.axvline(sp, color="#c0392b", ls="--", lw=1.2)
+    if len(oos):
+        ax.axvspan(sp, growth.index.max(), color="#c0392b", alpha=0.06)
+    ax.set_yscale("log")
+    ax.yaxis.set_major_formatter(mtick.FuncFormatter(lambda x, _: f"${int(x):,}"))
+    ax.set_ylabel("Croissance de 100 $ (échelle log)")
+    ax.set_title("TSMOM diversifié : échantillon papier vs hors échantillon",
+                 loc="left")
+    ax.annotate(f"In-sample 1985-2009\nSharpe = {_sh(ins):.2f}",
+                xy=(0.02, 0.88), xycoords="axes fraction", fontsize=9,
+                color="#1f3a93", ha="left")
+    ax.annotate(f"Out-of-sample 2010-2025\nSharpe = {_sh(oos):.2f}",
+                xy=(0.66, 0.18), xycoords="axes fraction", fontsize=9,
+                color="#c0392b", ha="left")
+    ax.legend(loc="upper left", frameon=False)
+    return _save(fig, save_name)
+
+
+def figure_turbulence(turbulence: pd.Series,
+                      by_bucket: pd.DataFrame,
+                      crises: list | None = None,
+                      save_name: str = "fig14_turbulence"):
+    """Deux panneaux : (a) indice de turbulence de Mahalanobis dans le temps,
+    crises ombrées ; (b) rendement annualisé du TSMOM par quintile de turbulence
+    (test du « best during extreme markets » de MOP §4.3 via Mahalanobis)."""
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 5))
+
+    # (a) Indice dans le temps
+    ax1.plot(turbulence.index, turbulence.values, color="#34495e", lw=0.9)
+    ax1.axhline(turbulence.quantile(0.80), color="#c0392b", ls="--", lw=1.0,
+                label="Seuil turbulent (80e pct)")
+    if crises:
+        for a, b, _lab in crises:
+            ax1.axvspan(pd.Timestamp(a), pd.Timestamp(b), color="#c0392b", alpha=0.10)
+    ax1.set_ylabel("Turbulence $d_t$ (Mahalanobis$^2$)")
+    ax1.set_title("(a) Indice de turbulence financière (Kritzman-Li)", loc="left")
+    ax1.legend(loc="upper left", frameon=False, fontsize=8)
+
+    # (b) Rendement TSMOM par quintile
+    labels = list(by_bucket.index)
+    vals = by_bucket["Ann. mean"].astype(float).values
+    colors = plt.cm.OrRd(np.linspace(0.35, 0.95, len(labels)))
+    ax2.bar(range(len(labels)), vals, color=colors, edgecolor="black", linewidth=0.4)
+    ax2.axhline(0, color="black", lw=0.8)
+    ax2.set_xticks(range(len(labels)))
+    ax2.set_xticklabels([f"{l}\n(calme)" if i == 0
+                         else f"{l}\n(turbulent)" if i == len(labels) - 1 else l
+                         for i, l in enumerate(labels)])
+    ax2.yaxis.set_major_formatter(mtick.PercentFormatter(xmax=1.0))
+    ax2.set_ylabel("Rendement annualisé du TSMOM")
+    ax2.set_title("(b) Le TSMOM performe le mieux quand le marché est turbulent",
+                  loc="left")
+    plt.tight_layout()
+    return _save(fig, save_name)

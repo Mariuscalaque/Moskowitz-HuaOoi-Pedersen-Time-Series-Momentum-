@@ -1,0 +1,4 @@
+,Alpha (%),t(Alpha),beta(LIQ),t(LIQ),R2,N
+"Baseline (MKT,SMB,HML,UMD)",0.6715,4.0172,,,0.1486,456.0000
++ LIQ_PS (tradable),0.6750,4.0085,-0.0146,-0.3041,0.1488,456.0000
+Univariate LIQ_PS,0.8181,4.4570,0.0107,0.1922,0.0001,456.0000
