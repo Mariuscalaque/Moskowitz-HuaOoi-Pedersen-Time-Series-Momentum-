@@ -1,5 +1,7 @@
 # Time Series Momentum — Réplication & Extensions
 
+> ✅ **Statut du projet : TERMINÉ** (mise à jour : Octobre 2026)
+
 Réplication complète, puis extension, de :
 
 > **Moskowitz, T. J., Ooi, Y. H., & Pedersen, L. H. (2012).**
